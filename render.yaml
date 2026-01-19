@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: firegoals-api
+    env: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
