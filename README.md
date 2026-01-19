@@ -48,8 +48,14 @@ psql "$DATABASE_URL" -f migrations/0001_init.sql
 ## Sync Model (MVP v2)
 
 - **Pull-only sync** via `GET /sync?workspace_id=...&since=RFC3339`.
-- Client stores `lastSync = server_time` from the response.
+- Server captures a cursor time at the start of the request and returns `server_time = cursor_time`.
+- Client stores `lastSync = server_time` from the response to avoid missing updates.
 - `POST /sync` is disabled; CRUD endpoints are the source of writes.
+
+### Client merge strategy
+
+Merge entities by `id` and prefer the newest record by:
+1) `updated_at` (server time), 2) `version` when timestamps match.
 
 ## Economy Guarantees
 

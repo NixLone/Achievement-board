@@ -48,8 +48,14 @@ psql "$DATABASE_URL" -f migrations/0001_init.sql
 ## Синхронизация (MVP v2)
 
 - **Только pull** через `GET /sync?workspace_id=...&since=RFC3339`.
-- Клиент сохраняет `lastSync = server_time` из ответа.
+- Сервер фиксирует cursor time в начале запроса и возвращает `server_time = cursor_time`.
+- Клиент сохраняет `lastSync = server_time` из ответа, чтобы не терять изменения.
 - `POST /sync` отключён; все изменения идут через CRUD.
+
+### Стратегия мерджа на клиенте
+
+Мердж по `id` с выбором более свежей записи по:
+1) `updated_at` (время сервера), 2) `version` при равных timestamp.
 
 ## Гарантии экономики
 

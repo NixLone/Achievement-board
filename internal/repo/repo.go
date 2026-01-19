@@ -77,6 +77,15 @@ func (r *Repo) UserInWorkspace(ctx context.Context, userID, workspaceID string) 
 	return exists, err
 }
 
+func (r *Repo) GetWorkspaceRole(ctx context.Context, userID, workspaceID string) (string, error) {
+	var role string
+	err := r.Pool.QueryRow(ctx, `SELECT role FROM workspace_members WHERE workspace_id=$1 AND user_id=$2`, workspaceID, userID).Scan(&role)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return role, err
+}
+
 func (r *Repo) ListUserWorkspaces(ctx context.Context, userID string) ([]string, error) {
 	rows, err := r.Pool.Query(ctx, `SELECT workspace_id FROM workspace_members WHERE user_id=$1`, userID)
 	if err != nil {
@@ -215,11 +224,11 @@ func (r *Repo) CompleteTask(ctx context.Context, id, workspaceID, userID string)
 
 	var value float64
 	err = tx.QueryRow(ctx, `UPDATE tasks SET status='done', done_at=now(), updated_at=now(), version=version+1
-		WHERE id=$1 AND workspace_id=$2 AND status!='done'
+		WHERE id=$1 AND workspace_id=$2 AND status!='done' AND deleted_at IS NULL
 		RETURNING value`, id, workspaceID).Scan(&value)
 	if errors.Is(err, pgx.ErrNoRows) {
 		var status string
-		checkErr := tx.QueryRow(ctx, `SELECT status FROM tasks WHERE id=$1 AND workspace_id=$2`, id, workspaceID).Scan(&status)
+		checkErr := tx.QueryRow(ctx, `SELECT status FROM tasks WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`, id, workspaceID).Scan(&status)
 		if errors.Is(checkErr, pgx.ErrNoRows) {
 			return 0, false, ErrNotFound
 		}
@@ -342,7 +351,7 @@ func (r *Repo) BuyReward(ctx context.Context, rewardID, workspaceID, userID stri
 	defer tx.Rollback(ctx)
 
 	var cost float64
-	if err := tx.QueryRow(ctx, `SELECT cost FROM rewards WHERE id=$1 AND workspace_id=$2`, rewardID, workspaceID).Scan(&cost); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT cost FROM rewards WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`, rewardID, workspaceID).Scan(&cost); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, ErrNotFound
 		}
@@ -421,20 +430,24 @@ func (r *Repo) ListAchievements(ctx context.Context, workspaceID string) ([]map[
 	return res, rows.Err()
 }
 
-func (r *Repo) ListSyncChanges(ctx context.Context, workspaceID string, since time.Time) (map[string][]map[string]any, error) {
-	goals, err := r.queryEntity(ctx, `SELECT id, title, description, period, start_date, end_date, status, created_at, updated_at, deleted_at, version FROM goals WHERE workspace_id=$1 AND (updated_at > $2 OR (deleted_at IS NOT NULL AND deleted_at > $2))`, workspaceID, since)
+func (r *Repo) ListSyncChanges(ctx context.Context, workspaceID string, since, until time.Time) (map[string][]map[string]any, error) {
+	goals, err := r.queryEntity(ctx, `SELECT id, title, description, period, start_date, end_date, status, created_at, updated_at, deleted_at, version
+		FROM goals WHERE workspace_id=$1 AND ((updated_at > $2 AND updated_at <= $3) OR (deleted_at IS NOT NULL AND deleted_at > $2 AND deleted_at <= $3))`, workspaceID, since, until)
 	if err != nil {
 		return nil, err
 	}
-	tasks, err := r.queryEntity(ctx, `SELECT id, goal_id, title, description, due_date, repeat_rule, value, status, done_at, created_at, updated_at, deleted_at, version FROM tasks WHERE workspace_id=$1 AND (updated_at > $2 OR (deleted_at IS NOT NULL AND deleted_at > $2))`, workspaceID, since)
+	tasks, err := r.queryEntity(ctx, `SELECT id, goal_id, title, description, due_date, repeat_rule, value, status, done_at, created_at, updated_at, deleted_at, version
+		FROM tasks WHERE workspace_id=$1 AND ((updated_at > $2 AND updated_at <= $3) OR (deleted_at IS NOT NULL AND deleted_at > $2 AND deleted_at <= $3))`, workspaceID, since, until)
 	if err != nil {
 		return nil, err
 	}
-	rewards, err := r.queryEntity(ctx, `SELECT id, title, description, cost, is_shared, cooldown_hours, created_at, updated_at, deleted_at, version FROM rewards WHERE workspace_id=$1 AND (updated_at > $2 OR (deleted_at IS NOT NULL AND deleted_at > $2))`, workspaceID, since)
+	rewards, err := r.queryEntity(ctx, `SELECT id, title, description, cost, is_shared, cooldown_hours, created_at, updated_at, deleted_at, version
+		FROM rewards WHERE workspace_id=$1 AND ((updated_at > $2 AND updated_at <= $3) OR (deleted_at IS NOT NULL AND deleted_at > $2 AND deleted_at <= $3))`, workspaceID, since, until)
 	if err != nil {
 		return nil, err
 	}
-	achievements, err := r.queryEntity(ctx, `SELECT id, title, description, image_url, achieved_at, created_at, updated_at, deleted_at, version FROM achievements WHERE workspace_id=$1 AND (updated_at > $2 OR (deleted_at IS NOT NULL AND deleted_at > $2))`, workspaceID, since)
+	achievements, err := r.queryEntity(ctx, `SELECT id, title, description, image_url, achieved_at, created_at, updated_at, deleted_at, version
+		FROM achievements WHERE workspace_id=$1 AND ((updated_at > $2 AND updated_at <= $3) OR (deleted_at IS NOT NULL AND deleted_at > $2 AND deleted_at <= $3))`, workspaceID, since, until)
 	if err != nil {
 		return nil, err
 	}

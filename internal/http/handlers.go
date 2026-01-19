@@ -5,6 +5,7 @@ import (
 	"encoding/base32"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"time"
 
@@ -202,7 +203,17 @@ func (a *API) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "FORBIDDEN", "Not allowed")
 		return
 	}
-	code := randomCode()
+	role, err := a.Repo.GetWorkspaceRole(r.Context(), userID, workspaceID)
+	if err != nil || role != "owner" {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "Only owner can invite")
+		return
+	}
+	code, err := randomCode()
+	if err != nil {
+		log.Printf("invite code generation failed: %v", err)
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to generate invite")
+		return
+	}
 	expiresAt := time.Now().Add(7 * 24 * time.Hour)
 	if err := a.Repo.CreateInvite(r.Context(), workspaceID, userID, code, expiresAt); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create invite")
@@ -642,12 +653,13 @@ func (a *API) handleSyncPull(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid since")
 		return
 	}
-	changes, err := a.Repo.ListSyncChanges(r.Context(), workspaceID, since)
+	cursorTime := time.Now().UTC()
+	changes, err := a.Repo.ListSyncChanges(r.Context(), workspaceID, since, cursorTime)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to sync")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"changes": changes, "server_time": time.Now().UTC()})
+	writeJSON(w, http.StatusOK, map[string]any{"changes": changes, "server_time": cursorTime})
 }
 
 func (a *API) handleSyncPush(w http.ResponseWriter, r *http.Request) {
@@ -672,18 +684,25 @@ func (a *API) authorizeWorkspace(w http.ResponseWriter, r *http.Request, workspa
 	return true
 }
 
-func randomCode() string {
-	return base32Encoder().EncodeToString(randomBytes(20))
+func randomCode() (string, error) {
+	data, err := randomBytes(20)
+	if err != nil {
+		return "", err
+	}
+	return base32Encoder().EncodeToString(data), nil
 }
 
 func base32Encoder() *base32.Encoding {
 	return base32.StdEncoding.WithPadding(base32.NoPadding)
 }
 
-func randomBytes(length int) []byte {
+func randomBytes(length int) ([]byte, error) {
 	buf := make([]byte, length)
-	_, _ = rand.Read(buf)
-	return buf
+	_, err := rand.Read(buf)
+	if err != nil {
+		return nil, err
+	}
+	return buf, nil
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {

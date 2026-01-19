@@ -89,7 +89,10 @@
 { "changes": { "tasks": [], "rewards": [] }, "server_time": "2024-01-01T00:00:00Z" }
 ```
 
-`POST /sync` отключён в MVP v2.
+Примечания:
+- `server_time` фиксируется в начале запроса (cursor time).
+- Клиент должен сохранять `lastSync = server_time`.
+- `POST /sync` отключён в MVP v2.
 
 ## Ошибки
 
@@ -110,3 +113,9 @@
 - `INVITE_USED`
 - `SYNC_PUSH_DISABLED`
 - `INTERNAL_ERROR`
+
+## Клиентский merge-by-id
+
+При синхронизации клиент должен мерджить сущности по `id` и оставлять более свежую запись:
+- приоритет по `updated_at`
+- при равенстве — по `version`

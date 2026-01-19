@@ -16,6 +16,7 @@ build/
 coverage/
 tmp/
 *.log
+*.tsbuildinfo
 
 # Frontend
 node_modules/

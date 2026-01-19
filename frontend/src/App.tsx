@@ -185,7 +185,7 @@ export default function App() {
             <h2>Магазин наград</h2>
             <RewardForm onAdd={handleAddReward} />
             <ul className="list">
-              {snapshot.rewards.map((reward) => (
+              {snapshot.rewards.filter((reward) => !reward.deleted_at).map((reward) => (
                 <li key={reward.id} className="list__item">
                   <div>
                     <p>{reward.title}</p>
@@ -202,7 +202,9 @@ export default function App() {
             <h2>Достижения</h2>
             <AchievementForm onAdd={handleAddAchievement} />
             <ul className="list">
-              {snapshot.achievements.map((achievement) => (
+              {snapshot.achievements
+                .filter((achievement) => !achievement.deleted_at)
+                .map((achievement) => (
                 <li key={achievement.id} className="list__item">
                   <div>
                     <p>{achievement.title}</p>

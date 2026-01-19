@@ -89,7 +89,10 @@ Response:
 { "changes": { "tasks": [], "rewards": [] }, "server_time": "2024-01-01T00:00:00Z" }
 ```
 
-`POST /sync` is disabled in MVP v2.
+Notes:
+- `server_time` is captured at request start (cursor time).
+- Client must save `lastSync = server_time`.
+- `POST /sync` is disabled in MVP v2.
 
 ## Errors
 
@@ -110,3 +113,9 @@ Common codes:
 - `INVITE_USED`
 - `SYNC_PUSH_DISABLED`
 - `INTERNAL_ERROR`
+
+## Client merge-by-id
+
+When syncing, the client should merge entities by `id` and keep the newest record:
+- prefer higher `updated_at`
+- if equal, prefer higher `version`
