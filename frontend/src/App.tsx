@@ -55,9 +55,6 @@ export default function App() {
       await login(email, password);
       const me = await getMe();
       const workspaceID = await listWorkspaces();
-      if (!workspaceID) {
-        throw new Error("Workspace ID is missing");
-      }
       const nextSnapshot = { ...snapshot, user: me, workspaceId: workspaceID };
       setSnapshot(nextSnapshot);
       await saveSnapshot(nextSnapshot);
@@ -79,13 +76,18 @@ export default function App() {
       setSnapshot(updated);
       await saveSnapshot(updated);
       await refreshBalance(updated.workspaceId);
-      setStatus("Синхронизация завершена");
+      setStatus(updated.workspaceId ? "Синхронизация завершена" : "Синхронизация завершена (workspace не найден)");
     } catch (error) {
       setStatus("Ошибка синхронизации");
     }
   }
 
-  async function refreshBalance(workspaceId: string) {
+  async function refreshBalance(workspaceId?: string | null) {
+    if (!workspaceId) {
+      // Not authorized or workspace not resolved yet.
+      setBalance(0);
+      return;
+    }
     const data = await fetchWorkspaceBalance(workspaceId);
     setBalance(data.balance);
   }
