@@ -55,6 +55,9 @@ export default function App() {
       await login(email, password);
       const me = await getMe();
       const workspaceID = await listWorkspaces();
+      if (!workspaceID) {
+        throw new Error("Workspace ID is missing");
+      }
       const nextSnapshot = { ...snapshot, user: me, workspaceId: workspaceID };
       setSnapshot(nextSnapshot);
       await saveSnapshot(nextSnapshot);
