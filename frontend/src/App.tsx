@@ -1,79 +1,57 @@
-import { useMemo, useState } from "react";
-import { BottomNav, TabId } from "./components/BottomNav";
-import { Home } from "./pages/Home";
-import { Plans } from "./pages/Plans";
-import { Store } from "./pages/Store";
-import { Achievements } from "./pages/Achievements";
-import { Settings } from "./pages/Settings";
+import { useEffect, useMemo, useState } from "react";
+import * as api from "./api";
 import {
-  addAchievement,
-  addReward,
-  addTask,
-  buyReward,
-  completeTask,
-  deleteAchievement,
-  deleteReward,
-  deleteTask,
-  fetchWorkspaceBalance,
-  getMe,
-  listWorkspaces,
-  login,
-  register,
-  runSyncPull,
-  updateAchievement,
-  updateReward,
-  updateTask
-} from "./api";
-import { ApiError, hasApiBaseUrl } from "./api/client";
-import { useStore } from "./state/store";
-import { Achievement, Reward, Task } from "./storage";
-import { mergeById } from "./utils/merge";
-import { useTheme } from "./theme/useTheme";
+  Achievement,
+  Reward,
+  Task,
+  WorkspaceSnapshot,
+  emptySnapshot,
+  loadSnapshot,
+  saveSnapshot
+} from "./storage";
+
+const tabs = ["Today", "Plans", "Store", "Achievements", "Settings"] as const;
+
+type Tab = (typeof tabs)[number];
 
 export default function App() {
-  const { snapshot, setSnapshot } = useStore();
-  const [activeTab, setActiveTab] = useState<TabId>("home");
+  const [activeTab, setActiveTab] = useState<Tab>("Today");
+  const [snapshot, setSnapshot] = useState<WorkspaceSnapshot>(emptySnapshot());
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [balance, setBalance] = useState<number>(0);
-  const { theme, setTheme } = useTheme();
 
-  const apiMissing = !hasApiBaseUrl();
+  useEffect(() => {
+    loadSnapshot().then((data) => {
+      setSnapshot(data);
+    });
+  }, []);
 
-  const tasks = useMemo(() => snapshot.tasks ?? [], [snapshot.tasks]);
-  const rewards = useMemo(() => snapshot.rewards ?? [], [snapshot.rewards]);
-  const achievements = useMemo(() => snapshot.achievements ?? [], [snapshot.achievements]);
-
-  async function refreshBalance(workspaceId?: string | null) {
-    if (!workspaceId) return;
-    const data = await fetchWorkspaceBalance(workspaceId);
-    setBalance(data.balance);
-  }
+  const todayTasks = useMemo(
+    () => snapshot.tasks.filter((task) => !task.deleted_at && task.status !== "done"),
+    [snapshot.tasks]
+  );
 
   async function handleAuth(action: "login" | "register") {
-    if (apiMissing) {
-      setStatus("API URL не настроен");
-      return;
-    }
     setStatus(null);
     try {
       if (action === "register") {
-        await register(email, password);
+        await api.register(email, password);
       }
-      await login(email, password);
-      const me = await getMe();
-      const workspaceID = await listWorkspaces();
+      await api.login(email, password);
+      const me = await api.getMe();
+      const workspaceID = await api.listWorkspaces();
+      if (!workspaceID) {
+        throw new Error("Workspace ID is missing");
+      }
       const nextSnapshot = { ...snapshot, user: me, workspaceId: workspaceID };
       setSnapshot(nextSnapshot);
+      await saveSnapshot(nextSnapshot);
       await refreshBalance(workspaceID);
       setStatus("Авторизация успешна");
     } catch (error) {
-      if (error instanceof ApiError) {
-        setStatus(error.message);
-      } else {
-        setStatus("Сервер недоступен");
-      }
+      setStatus("Не удалось авторизоваться");
     }
   }
 
@@ -84,216 +62,284 @@ export default function App() {
     }
     setStatus("Синхронизация...");
     try {
-      const updated = await runSyncPull(snapshot);
+      const updated = await api.runSyncPull(snapshot);
       setSnapshot(updated);
+      await saveSnapshot(updated);
       await refreshBalance(updated.workspaceId);
       setStatus("Синхронизация завершена");
     } catch (error) {
-      if (error instanceof ApiError) {
-        setStatus(error.message);
-      } else {
-        setStatus("Ошибка синхронизации");
-      }
+      setStatus("Ошибка синхронизации");
     }
+  }
+
+  async function refreshBalance(workspaceId: string) {
+    const data = await api.fetchWorkspaceBalance(workspaceId);
+    setBalance(data.balance);
   }
 
   async function handleAddTask(form: { title: string; value: number; dueDate: string }) {
     if (!snapshot.workspaceId) return;
-    try {
-      const task = await addTask(snapshot.workspaceId, form);
-      const updated = { ...snapshot, tasks: mergeById(snapshot.tasks, [task]) };
-      setSnapshot(updated);
-    } catch (error) {
-      setStatus("Не удалось добавить задачу");
-    }
+    const task = await api.addTask(snapshot.workspaceId, form);
+    const updated = updateLocalCache(snapshot, { tasks: [task] });
+    setSnapshot(updated);
+    await saveSnapshot(updated);
   }
 
   async function handleCompleteTask(task: Task) {
     if (!snapshot.workspaceId) return;
-    await completeTask(snapshot.workspaceId, task.id);
-    const updatedTask = { ...task, status: "done", done_at: new Date().toISOString() };
-    const updated = { ...snapshot, tasks: mergeById(snapshot.tasks, [updatedTask]) };
+    await api.completeTask(snapshot.workspaceId, task.id);
+    const updated = updateLocalCache(snapshot, {
+      tasks: snapshot.tasks.map((item) =>
+        item.id === task.id
+          ? { ...item, status: "done", done_at: new Date().toISOString() }
+          : item
+      )
+    });
     setSnapshot(updated);
+    await saveSnapshot(updated);
     await refreshBalance(snapshot.workspaceId);
   }
 
-  async function handleEditTask(task: Task, update: Partial<Task>) {
+  async function handleAddReward(form: { title: string; cost: number; description: string }) {
     if (!snapshot.workspaceId) return;
-    const updatedTask = { ...task, ...update };
-    setSnapshot({ ...snapshot, tasks: mergeById(snapshot.tasks, [updatedTask]) });
-  }
-
-  async function handleSaveTask(task: Task) {
-    if (!snapshot.workspaceId) return;
-    try {
-      await updateTask(snapshot.workspaceId, task.id, {
-        title: task.title,
-        description: task.description,
-        value: task.value
-      });
-    } catch (error) {
-      setStatus("Не удалось сохранить задачу");
-    }
-  }
-
-  async function handleDeleteTask(task: Task) {
-    if (!snapshot.workspaceId) return;
-    const updatedTask = { ...task, deleted_at: new Date().toISOString() };
-    setSnapshot({ ...snapshot, tasks: mergeById(snapshot.tasks, [updatedTask]) });
-    try {
-      await deleteTask(snapshot.workspaceId, task.id);
-    } catch (error) {
-      setStatus("Не удалось удалить задачу");
-    }
-  }
-
-  async function handleAddReward(form: { title: string; cost: number; description: string; icon: string }) {
-    if (!snapshot.workspaceId) return;
-    try {
-      const reward = await addReward(snapshot.workspaceId, form);
-      const updated = { ...snapshot, rewards: mergeById(snapshot.rewards, [reward]) };
-      setSnapshot(updated);
-    } catch (error) {
-      setStatus("Не удалось добавить награду");
-    }
+    const reward = await api.addReward(snapshot.workspaceId, form);
+    const updated = updateLocalCache(snapshot, { rewards: [reward] });
+    setSnapshot(updated);
+    await saveSnapshot(updated);
   }
 
   async function handleBuyReward(reward: Reward) {
     if (!snapshot.workspaceId) return;
-    try {
-      await buyReward(snapshot.workspaceId, reward.id);
-      await refreshBalance(snapshot.workspaceId);
-    } catch (error) {
-      if (error instanceof ApiError) {
-        setStatus(error.message);
-      }
-    }
+    await api.buyReward(snapshot.workspaceId, reward.id);
+    await refreshBalance(snapshot.workspaceId);
   }
 
-  async function handleEditReward(reward: Reward, update: Partial<Reward>) {
+  async function handleAddAchievement(form: { title: string; description: string }) {
     if (!snapshot.workspaceId) return;
-    const updatedReward = { ...reward, ...update };
-    setSnapshot({ ...snapshot, rewards: mergeById(snapshot.rewards, [updatedReward]) });
-  }
-
-  async function handleSaveReward(reward: Reward) {
-    if (!snapshot.workspaceId) return;
-    try {
-      await updateReward(snapshot.workspaceId, reward.id, {
-        title: reward.title,
-        description: reward.description,
-        cost: reward.cost
-      });
-    } catch (error) {
-      setStatus("Не удалось сохранить награду");
-    }
-  }
-
-  async function handleDeleteReward(reward: Reward) {
-    if (!snapshot.workspaceId) return;
-    const updatedReward = { ...reward, deleted_at: new Date().toISOString() };
-    setSnapshot({ ...snapshot, rewards: mergeById(snapshot.rewards, [updatedReward]) });
-    try {
-      await deleteReward(snapshot.workspaceId, reward.id);
-    } catch (error) {
-      setStatus("Не удалось удалить награду");
-    }
-  }
-
-  async function handleAddAchievement(form: { title: string; description: string; imageUrl: string }) {
-    if (!snapshot.workspaceId) return;
-    try {
-      const achievement = await addAchievement(snapshot.workspaceId, form);
-      const updated = { ...snapshot, achievements: mergeById(snapshot.achievements, [achievement]) };
-      setSnapshot(updated);
-    } catch (error) {
-      setStatus("Не удалось добавить достижение");
-    }
-  }
-
-  async function handleEditAchievement(achievement: Achievement, update: Partial<Achievement>) {
-    if (!snapshot.workspaceId) return;
-    const updatedAchievement = { ...achievement, ...update };
-    setSnapshot({ ...snapshot, achievements: mergeById(snapshot.achievements, [updatedAchievement]) });
-  }
-
-  async function handleSaveAchievement(achievement: Achievement) {
-    if (!snapshot.workspaceId) return;
-    try {
-      await updateAchievement(snapshot.workspaceId, achievement.id, {
-        title: achievement.title,
-        description: achievement.description,
-        image_url: achievement.image_url
-      });
-    } catch (error) {
-      setStatus("Не удалось сохранить достижение");
-    }
-  }
-
-  async function handleDeleteAchievement(achievement: Achievement) {
-    if (!snapshot.workspaceId) return;
-    const updatedAchievement = { ...achievement, deleted_at: new Date().toISOString() };
-    setSnapshot({ ...snapshot, achievements: mergeById(snapshot.achievements, [updatedAchievement]) });
-    try {
-      await deleteAchievement(snapshot.workspaceId, achievement.id);
-    } catch (error) {
-      setStatus("Не удалось удалить достижение");
-    }
+    const achievement = await api.addAchievement(snapshot.workspaceId, form);
+    const updated = updateLocalCache(snapshot, { achievements: [achievement] });
+    setSnapshot(updated);
+    await saveSnapshot(updated);
   }
 
   return (
     <div className="app">
-      {status && <div className="toast">{status}</div>}
-      {activeTab === "home" && (
-        <Home
-          balance={balance}
-          tasks={tasks}
-          onAdd={handleAddTask}
-          onComplete={handleCompleteTask}
-          onEdit={handleEditTask}
-          onSave={handleSaveTask}
-          onDelete={handleDeleteTask}
-        />
-      )}
-      {activeTab === "plans" && <Plans />}
-      {activeTab === "store" && (
-        <Store
-          rewards={rewards}
-          onBuy={handleBuyReward}
-          onAdd={handleAddReward}
-          onEdit={handleEditReward}
-          onSave={handleSaveReward}
-          onDelete={handleDeleteReward}
-        />
-      )}
-      {activeTab === "achievements" && (
-        <Achievements
-          achievements={achievements}
-          onAdd={handleAddAchievement}
-          onEdit={handleEditAchievement}
-          onSave={handleSaveAchievement}
-          onDelete={handleDeleteAchievement}
-        />
-      )}
-      {activeTab === "settings" && (
-        <Settings
-          email={email}
-          password={password}
-          userEmail={snapshot.user?.email ?? null}
-          workspaceId={snapshot.workspaceId ?? null}
-          theme={theme}
-          onThemeChange={setTheme}
-          onEmailChange={setEmail}
-          onPasswordChange={setPassword}
-          onLogin={() => handleAuth("login")}
-          onRegister={() => handleAuth("register")}
-          onSync={handleSync}
-          status={status}
-          apiMissing={apiMissing}
-          lastSync={snapshot.lastSync ?? null}
-        />
-      )}
-      <BottomNav active={activeTab} onChange={setActiveTab} />
+      <header className="app__header">
+        <div>
+          <h1>FireGoals</h1>
+          <p className="muted">Цели, задачи и огоньки</p>
+        </div>
+        <div className="balance">
+          <span>Огоньки</span>
+          <strong>{balance.toFixed(2)}</strong>
+        </div>
+      </header>
+      <nav className="app__nav">
+        {tabs.map((tab) => (
+          <button
+            key={tab}
+            className={tab === activeTab ? "active" : ""}
+            onClick={() => setActiveTab(tab)}
+          >
+            {tab}
+          </button>
+        ))}
+      </nav>
+      <main className="app__main">
+        {activeTab === "Today" && (
+          <section className="card">
+            <h2>Сегодня</h2>
+            <TaskForm onAdd={handleAddTask} />
+            <ul className="list">
+              {todayTasks.map((task) => (
+                <li key={task.id} className="list__item">
+                  <div>
+                    <p>{task.title}</p>
+                    <span className="muted">+{task.value} огоньков</span>
+                  </div>
+                  <button onClick={() => handleCompleteTask(task)}>Готово</button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+        {activeTab === "Plans" && (
+          <section className="card">
+            <h2>Планы</h2>
+            <p className="muted">Добавляйте цели и задачи на неделю, месяц или год.</p>
+            <p>В скором времени появится детальная планировка.</p>
+          </section>
+        )}
+        {activeTab === "Store" && (
+          <section className="card">
+            <h2>Магазин наград</h2>
+            <RewardForm onAdd={handleAddReward} />
+            <ul className="list">
+              {snapshot.rewards.filter((reward) => !reward.deleted_at).map((reward) => (
+                <li key={reward.id} className="list__item">
+                  <div>
+                    <p>{reward.title}</p>
+                    <span className="muted">{reward.cost} огоньков</span>
+                  </div>
+                  <button onClick={() => handleBuyReward(reward)}>Купить</button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+        {activeTab === "Achievements" && (
+          <section className="card">
+            <h2>Достижения</h2>
+            <AchievementForm onAdd={handleAddAchievement} />
+            <ul className="list">
+              {snapshot.achievements
+                .filter((achievement) => !achievement.deleted_at)
+                .map((achievement) => (
+                <li key={achievement.id} className="list__item">
+                  <div>
+                    <p>{achievement.title}</p>
+                    <span className="muted">{achievement.description}</span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+        {activeTab === "Settings" && (
+          <section className="card">
+            <h2>Профиль и синхронизация</h2>
+            <div className="auth">
+              <input
+                type="email"
+                placeholder="Email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+              />
+              <input
+                type="password"
+                placeholder="Пароль"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+              <div className="auth__actions">
+                <button onClick={() => handleAuth("login")}>Войти</button>
+                <button className="secondary" onClick={() => handleAuth("register")}>
+                  Регистрация
+                </button>
+              </div>
+            </div>
+            <button className="full" onClick={handleSync}>
+              Синхронизировать сейчас
+            </button>
+            {status && <p className="muted">{status}</p>}
+          </section>
+        )}
+      </main>
+    </div>
+  );
+}
+
+function TaskForm({ onAdd }: { onAdd: (data: { title: string; value: number; dueDate: string }) => void }) {
+  const [title, setTitle] = useState("");
+  const [value, setValue] = useState(10);
+  const [dueDate, setDueDate] = useState("");
+
+  return (
+    <div className="form">
+      <input
+        value={title}
+        placeholder="Название задачи"
+        onChange={(event) => setTitle(event.target.value)}
+      />
+      <input
+        type="number"
+        value={value}
+        onChange={(event) => setValue(Number(event.target.value))}
+      />
+      <input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
+      <button
+        onClick={() => {
+          if (title) {
+            onAdd({ title, value, dueDate });
+            setTitle("");
+            setDueDate("");
+          }
+        }}
+      >
+        Добавить
+      </button>
+    </div>
+  );
+}
+
+function RewardForm({
+  onAdd
+}: {
+  onAdd: (data: { title: string; cost: number; description: string }) => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [cost, setCost] = useState(30);
+  const [description, setDescription] = useState("");
+
+  return (
+    <div className="form">
+      <input
+        value={title}
+        placeholder="Награда"
+        onChange={(event) => setTitle(event.target.value)}
+      />
+      <input type="number" value={cost} onChange={(event) => setCost(Number(event.target.value))} />
+      <input
+        value={description}
+        placeholder="Описание"
+        onChange={(event) => setDescription(event.target.value)}
+      />
+      <button
+        onClick={() => {
+          if (title) {
+            onAdd({ title, cost, description });
+            setTitle("");
+            setDescription("");
+          }
+        }}
+      >
+        Добавить
+      </button>
+    </div>
+  );
+}
+
+function AchievementForm({
+  onAdd
+}: {
+  onAdd: (data: { title: string; description: string }) => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+
+  return (
+    <div className="form">
+      <input
+        value={title}
+        placeholder="Достижение"
+        onChange={(event) => setTitle(event.target.value)}
+      />
+      <input
+        value={description}
+        placeholder="Описание"
+        onChange={(event) => setDescription(event.target.value)}
+      />
+      <button
+        onClick={() => {
+          if (title) {
+            onAdd({ title, description });
+            setTitle("");
+            setDescription("");
+          }
+        }}
+      >
+        Добавить
+      </button>
     </div>
   );
 }
