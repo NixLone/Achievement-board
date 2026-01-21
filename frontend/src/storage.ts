@@ -18,6 +18,7 @@ export type Reward = {
   title: string;
   description: string;
   cost: number;
+  icon?: string;
   deleted_at?: string | null;
   updated_at?: string;
   version?: number;
@@ -34,12 +35,25 @@ export type Achievement = {
   version?: number;
 };
 
+export type Goal = {
+  id: string;
+  workspace_id: string;
+  title: string;
+  description: string;
+  period: string;
+  status: string;
+  updated_at?: string;
+  version?: number;
+  deleted_at?: string | null;
+};
+
 export type WorkspaceSnapshot = {
   user?: { id: string; email: string } | null;
   workspaceId?: string | null;
   tasks: Task[];
   rewards: Reward[];
   achievements: Achievement[];
+  goals: Goal[];
   lastSync?: string | null;
 };
 
@@ -50,6 +64,7 @@ export function emptySnapshot(): WorkspaceSnapshot {
     tasks: [],
     rewards: [],
     achievements: [],
+    goals: [],
     lastSync: null,
     user: null,
     workspaceId: null
