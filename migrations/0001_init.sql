@@ -47,6 +47,11 @@ CREATE TABLE tasks (
   title text NOT NULL,
   description text NOT NULL DEFAULT '',
   due_date date NULL,
+  is_recurring boolean NOT NULL DEFAULT false,
+  recurrence_rule text NULL,
+  start_date date NULL,
+  end_date date NULL,
+  timezone text NULL,
   repeat_rule text NULL,
   value numeric(10,2) NOT NULL DEFAULT 0 CHECK (value >= 0),
   status text NOT NULL,
@@ -55,6 +60,16 @@ CREATE TABLE tasks (
   updated_at timestamptz NOT NULL DEFAULT now(),
   deleted_at timestamptz NULL,
   version int NOT NULL DEFAULT 1
+);
+
+CREATE TABLE task_occurrences (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  task_id uuid REFERENCES tasks(id) ON DELETE CASCADE,
+  occurrence_date date NOT NULL,
+  done boolean NOT NULL DEFAULT false,
+  completed_at timestamptz NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (task_id, occurrence_date)
 );
 
 CREATE TABLE rewards (
@@ -133,5 +148,6 @@ CREATE TABLE workspace_invites (
 CREATE INDEX idx_goals_workspace_updated ON goals (workspace_id, updated_at);
 CREATE INDEX idx_tasks_workspace_updated ON tasks (workspace_id, updated_at);
 CREATE INDEX idx_tasks_workspace_due ON tasks (workspace_id, due_date);
+CREATE INDEX idx_task_occurrences_task_date ON task_occurrences (task_id, occurrence_date);
 CREATE INDEX idx_rewards_workspace_updated ON rewards (workspace_id, updated_at);
 CREATE INDEX idx_achievements_workspace_updated ON achievements (workspace_id, updated_at);
