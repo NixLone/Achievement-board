@@ -80,7 +80,7 @@ Merge entities by `id` and prefer the newest record by:
 
 - Build command: `npm run build`
 - Output directory: `dist`
-- Environment: `VITE_API_URL` (point to Render backend)
+- Environment: `VITE_API_BASE_URL` (point to Render backend)
 
 ## Environment Variables
 
@@ -91,7 +91,7 @@ Backend:
 - `PORT`
 
 Frontend:
-- `VITE_API_URL`
+- `VITE_API_BASE_URL`
 
 ## API Notes
 
@@ -106,3 +106,17 @@ Frontend:
 - [Russian README](./README_RU.md)
 - [API EN](./docs/api_EN.md)
 - [API RU](./docs/api_RU.md)
+
+## Troubleshooting
+
+**Render returns 404**  
+Verify `/health` works and that the service is deployed from the repository root. Ensure `PORT` is configured by Render or set explicitly.
+
+**Cloudflare Pages build fails on tsc**  
+Install dependencies (`npm install`) and ensure `VITE_API_BASE_URL` is configured in Pages. Missing env can cause runtime errors.
+
+**Check /health**  
+Open `<backend-url>/health` to verify the service is up.
+
+**CORS/ENV issues**  
+Make sure `CORS_ORIGIN` includes your Pages domain and `http://localhost:5173` for local dev.

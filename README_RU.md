@@ -80,7 +80,7 @@ psql "$DATABASE_URL" -f migrations/0001_init.sql
 
 - Build command: `npm run build`
 - Output directory: `dist`
-- Environment: `VITE_API_URL` (URL backend на Render)
+- Environment: `VITE_API_BASE_URL` (URL backend на Render)
 
 ## Переменные окружения
 
@@ -91,7 +91,7 @@ Backend:
 - `PORT`
 
 Frontend:
-- `VITE_API_URL`
+- `VITE_API_BASE_URL`
 
 ## API заметки
 
@@ -105,3 +105,17 @@ Frontend:
 
 - [API EN](./docs/api_EN.md)
 - [API RU](./docs/api_RU.md)
+
+## Troubleshooting
+
+**Render показывает 404**  
+Проверьте `/health` и убедитесь, что сервис деплоится из корня репозитория. Убедитесь, что `PORT` корректно задан Render.
+
+**Cloudflare Pages падает на tsc**  
+Установите зависимости (`npm install`) и проверьте, что `VITE_API_BASE_URL` задан в Pages.
+
+**Как проверить /health**  
+Откройте `<backend-url>/health` и убедитесь, что статус `ok`.
+
+**CORS/ENV**  
+`CORS_ORIGIN` должен включать домен Pages и `http://localhost:5173` для локальной разработки.
