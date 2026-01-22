@@ -1,5 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
-import * as api from "./api";
+import {
+  addAchievement,
+  addReward,
+  addTask,
+  buyReward,
+  completeTask,
+  fetchWorkspaceBalance,
+  getMe,
+  listWorkspaces,
+  login,
+  register,
+  runSyncPull,
+} from "./api";
 import {
   Achievement,
   Reward,
@@ -28,6 +40,28 @@ export default function App() {
     });
   }, []);
 
+
+  function mergeById<T extends { id: string }>(base: T[] | undefined, updates: T[] | undefined): T[] {
+    const out = new Map<string, T>();
+    for (const item of base ?? []) out.set(item.id, item);
+    for (const item of updates ?? []) out.set(item.id, item);
+    return Array.from(out.values());
+  }
+
+  /**
+   * Update local snapshot with partial server/local changes.
+   * Keeps arrays merged by id so UI updates instantly and sync pull can merge safely.
+   */
+  function updateLocalCache(current: WorkspaceSnapshot, patch: Partial<WorkspaceSnapshot>): WorkspaceSnapshot {
+    return {
+      ...current,
+      ...patch,
+      tasks: patch.tasks ? mergeById(current.tasks, patch.tasks) : current.tasks,
+      rewards: patch.rewards ? mergeById(current.rewards, patch.rewards) : current.rewards,
+      achievements: patch.achievements ? mergeById(current.achievements, patch.achievements) : current.achievements,
+    };
+  }
+
   const todayTasks = useMemo(
     () => snapshot.tasks.filter((task) => !task.deleted_at && task.status !== "done"),
     [snapshot.tasks]
@@ -37,13 +71,14 @@ export default function App() {
     setStatus(null);
     try {
       if (action === "register") {
-        await api.register(email, password);
+        await register(email, password);
       }
-      await api.login(email, password);
-      const me = await api.getMe();
-      const workspaceID = await api.listWorkspaces();
+      await login(email, password);
+      const me = await getMe();
+      const workspaceID = await listWorkspaces();
       if (!workspaceID) {
-        throw new Error("Workspace ID is missing");
+        setStatus("Workspace не найден (проверь базу/аккаунт)");
+        return;
       }
       const nextSnapshot = { ...snapshot, user: me, workspaceId: workspaceID };
       setSnapshot(nextSnapshot);
@@ -62,7 +97,7 @@ export default function App() {
     }
     setStatus("Синхронизация...");
     try {
-      const updated = await api.runSyncPull(snapshot);
+      const updated = await runSyncPull(snapshot);
       setSnapshot(updated);
       await saveSnapshot(updated);
       await refreshBalance(updated.workspaceId);
@@ -72,14 +107,15 @@ export default function App() {
     }
   }
 
-  async function refreshBalance(workspaceId: string) {
-    const data = await api.fetchWorkspaceBalance(workspaceId);
+  async function refreshBalance(workspaceId?: string | null) {
+    if (!workspaceId) { setBalance(0); return; }
+    const data = await fetchWorkspaceBalance(workspaceId);
     setBalance(data.balance);
   }
 
   async function handleAddTask(form: { title: string; value: number; dueDate: string }) {
     if (!snapshot.workspaceId) return;
-    const task = await api.addTask(snapshot.workspaceId, form);
+    const task = await addTask(snapshot.workspaceId, form);
     const updated = updateLocalCache(snapshot, { tasks: [task] });
     setSnapshot(updated);
     await saveSnapshot(updated);
@@ -87,7 +123,7 @@ export default function App() {
 
   async function handleCompleteTask(task: Task) {
     if (!snapshot.workspaceId) return;
-    await api.completeTask(snapshot.workspaceId, task.id);
+    await completeTask(snapshot.workspaceId, task.id);
     const updated = updateLocalCache(snapshot, {
       tasks: snapshot.tasks.map((item) =>
         item.id === task.id
@@ -102,7 +138,7 @@ export default function App() {
 
   async function handleAddReward(form: { title: string; cost: number; description: string }) {
     if (!snapshot.workspaceId) return;
-    const reward = await api.addReward(snapshot.workspaceId, form);
+    const reward = await addReward(snapshot.workspaceId, form);
     const updated = updateLocalCache(snapshot, { rewards: [reward] });
     setSnapshot(updated);
     await saveSnapshot(updated);
@@ -110,13 +146,13 @@ export default function App() {
 
   async function handleBuyReward(reward: Reward) {
     if (!snapshot.workspaceId) return;
-    await api.buyReward(snapshot.workspaceId, reward.id);
+    await buyReward(snapshot.workspaceId, reward.id);
     await refreshBalance(snapshot.workspaceId);
   }
 
   async function handleAddAchievement(form: { title: string; description: string }) {
     if (!snapshot.workspaceId) return;
-    const achievement = await api.addAchievement(snapshot.workspaceId, form);
+    const achievement = await addAchievement(snapshot.workspaceId, form);
     const updated = updateLocalCache(snapshot, { achievements: [achievement] });
     setSnapshot(updated);
     await saveSnapshot(updated);
