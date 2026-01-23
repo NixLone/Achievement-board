@@ -1,55 +1,85 @@
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string | undefined;
+// frontend/src/api/client.ts
+// Shared API client with Bearer token support.
+// Fixes "UNAUTHORIZED: Missing token" by always attaching Authorization header when token exists.
 
 export class ApiError extends Error {
-  constructor(
-    public code: string,
-    message: string,
-    public status?: number
-  ) {
+  status: number;
+  code?: string;
+  constructor(message: string, status: number, code?: string) {
     super(message);
     this.name = "ApiError";
+    this.status = status;
+    this.code = code;
   }
 }
 
-function getToken(): string | null {
-  return localStorage.getItem("firegoals-token");
-}
-
-function setToken(token: string) {
-  localStorage.setItem("firegoals-token", token);
-}
-
-export function hasApiBaseUrl() {
-  return Boolean(API_BASE_URL);
-}
-
-export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
-  if (!API_BASE_URL) {
-    throw new ApiError("API_BASE_URL_MISSING", "API URL не настроен");
-  }
-  const token = getToken();
-  const headers = new Headers(options.headers ?? {});
-  headers.set("Content-Type", "application/json");
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
-  const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
-  const contentType = response.headers.get("Content-Type") ?? "";
-  if (!response.ok) {
-    if (contentType.includes("application/json")) {
-      const payload = (await response.json()) as { error?: { code?: string; message?: string } };
-      const code = payload?.error?.code ?? "API_ERROR";
-      const message = payload?.error?.message ?? "Ошибка запроса";
-      throw new ApiError(code, message, response.status);
-    }
-    throw new ApiError("API_ERROR", "Сервер недоступен", response.status);
-  }
-  if (contentType.includes("application/json")) {
-    return response.json() as Promise<T>;
-  }
-  return {} as T;
-}
+const TOKEN_KEY = "firegoals_token";
 
 export function storeToken(token: string) {
-  setToken(token);
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function clearToken() {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+function getBaseUrl(): string {
+  const fromEnv = (import.meta as any).env?.VITE_API_BASE_URL as string | undefined;
+  return (fromEnv ?? "").replace(/\/$/, "");
+}
+
+export async function apiFetch<T = any>(path: string, init: RequestInit = {}): Promise<T> {
+  const base = getBaseUrl();
+  const url = path.startsWith("http") ? path : `${base}${path.startsWith("/") ? "" : "/"}${path}`;
+
+  const headers = new Headers(init.headers ?? {});
+  if (!headers.has("Content-Type") && init.body != null) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  // Attach Bearer token automatically if present.
+  const token = getToken();
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  const res = await fetch(url, { ...init, headers });
+
+  // 204 No Content
+  if (res.status === 204) return undefined as unknown as T;
+
+  const contentType = res.headers.get("content-type") ?? "";
+  const isJSON = contentType.includes("application/json");
+
+  if (!res.ok) {
+    let message = `${res.status} ${res.statusText}`;
+    let code: string | undefined;
+
+    try {
+      if (isJSON) {
+        const errBody = await res.json();
+        // server uses { error: { code, message } }
+        const e = errBody?.error;
+        if (e?.message) message = e.message;
+        if (e?.code) code = e.code;
+      } else {
+        const txt = await res.text();
+        if (txt) message = txt;
+      }
+    } catch {
+      // ignore parse errors
+    }
+
+    throw new ApiError(message, res.status, code);
+  }
+
+  if (!isJSON) {
+    // If server returns plain text
+    return (await res.text()) as unknown as T;
+  }
+  return (await res.json()) as T;
 }
