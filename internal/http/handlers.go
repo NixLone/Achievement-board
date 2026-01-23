@@ -81,6 +81,16 @@ type settingsRequest struct {
 	LastActiveWorkspace *string `json:"last_active_workspace"`
 }
 
+
+type userSettings struct {
+	Theme               string  `json:"theme"`
+	LastActiveWorkspace *string `json:"last_active_workspace"`
+}
+
+func defaultUserSettings() userSettings {
+	return userSettings{Theme: "light-minimal", LastActiveWorkspace: nil}
+}
+
 type achievementRequest struct {
 	WorkspaceID string     `json:"workspace_id"`
 	Title       string     `json:"title"`
@@ -112,6 +122,14 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "REGISTRATION_FAILED", err.Error())
 		return
 	}
+
+	// Best-effort bootstrap: create personal workspace + default settings so the app works right after signup.
+	wsID, wsErr := a.Repo.CreateWorkspace(r.Context(), "Личный", "personal", userID)
+	if wsErr == nil {
+		_ = a.Repo.UpsertUserSettings(r.Context(), userID, "light-minimal", &wsID)
+	} else {
+		_ = a.Repo.UpsertUserSettings(r.Context(), userID, "light-minimal", nil)
+	}
 	writeJSON(w, http.StatusCreated, entityResponse{ID: userID})
 }
 
@@ -141,6 +159,12 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 	settings, err := a.Repo.GetUserSettings(r.Context(), userID)
 	if err != nil {
+		// If settings row isn't created yet, return defaults instead of failing the whole login flow.
+		if errors.Is(err, repo.ErrNotFound) {
+			def := defaultUserSettings()
+			writeJSON(w, http.StatusOK, map[string]any{"id": id, "email": email, "settings": def})
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load settings")
 		return
 	}
@@ -155,6 +179,11 @@ func (a *API) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	settings, err := a.Repo.GetUserSettings(r.Context(), userID)
 	if err != nil {
+		if errors.Is(err, repo.ErrNotFound) {
+			def := defaultUserSettings()
+			writeJSON(w, http.StatusOK, def)
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load settings")
 		return
 	}
