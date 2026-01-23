@@ -168,7 +168,7 @@ export default function App() {
       setSnapshot(nextSnapshot);
       setWorkspaces(workspaceList);
       if (me.settings?.theme) {
-        setTheme(me.settings.theme);
+        setTheme(me.settings.theme as any);
       }
       if (activeWorkspace) {
         await refreshWorkspace(activeWorkspace);
@@ -358,7 +358,7 @@ export default function App() {
   }
 
   async function handleThemeChange(nextTheme: string) {
-    setTheme(nextTheme as typeof theme);
+    setTheme(nextTheme as any);
     if (!snapshot.user?.id || apiMissing) return;
     try {
       await updateSettings({ theme: nextTheme, last_active_workspace: snapshot.workspaceId ?? null });
