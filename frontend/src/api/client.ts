@@ -27,13 +27,17 @@ export function clearToken() {
   localStorage.removeItem(TOKEN_KEY);
 }
 
-function getBaseUrl(): string {
+export function getApiBaseUrl(): string {
   const fromEnv = (import.meta as any).env?.VITE_API_BASE_URL as string | undefined;
   return (fromEnv ?? "").replace(/\/$/, "");
 }
 
+export function hasApiBaseUrl(): boolean {
+  return getApiBaseUrl().length > 0;
+}
+
 export async function apiFetch<T = any>(path: string, init: RequestInit = {}): Promise<T> {
-  const base = getBaseUrl();
+  const base = getApiBaseUrl();
   const url = path.startsWith("http") ? path : `${base}${path.startsWith("/") ? "" : "/"}${path}`;
 
   const headers = new Headers(init.headers ?? {});
@@ -62,7 +66,6 @@ export async function apiFetch<T = any>(path: string, init: RequestInit = {}): P
     try {
       if (isJSON) {
         const errBody = await res.json();
-        // server uses { error: { code, message } }
         const e = errBody?.error;
         if (e?.message) message = e.message;
         if (e?.code) code = e.code;
@@ -78,7 +81,6 @@ export async function apiFetch<T = any>(path: string, init: RequestInit = {}): P
   }
 
   if (!isJSON) {
-    // If server returns plain text
     return (await res.text()) as unknown as T;
   }
   return (await res.json()) as T;
