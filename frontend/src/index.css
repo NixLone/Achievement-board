@@ -4,7 +4,7 @@
   color: var(--text);
 }
 
-:root[data-theme="light"] {
+:root[data-theme="light-minimal"] {
   --bg: #f6f7fb;
   --card: #ffffff;
   --text: #1e1f24;
@@ -15,7 +15,7 @@
   --nav: #ffffff;
 }
 
-:root[data-theme="ember"] {
+:root[data-theme="dark-ember"] {
   --bg: #0f1014;
   --card: #171922;
   --text: #f7f7fb;
@@ -26,7 +26,7 @@
   --nav: #151720;
 }
 
-:root[data-theme="nord"] {
+:root[data-theme="nord-calm"] {
   --bg: #e9eef3;
   --card: #f7fafc;
   --text: #2d3845;
@@ -37,7 +37,7 @@
   --nav: #f7fafc;
 }
 
-:root[data-theme="oled"] {
+:root[data-theme="oled-black"] {
   --bg: #000000;
   --card: #0b0b0b;
   --text: #f5f5f5;
@@ -91,6 +91,10 @@ body {
   border-radius: 18px;
   padding: 16px;
   box-shadow: 0 12px 30px var(--shadow);
+}
+
+.card.weekday-card {
+  cursor: pointer;
 }
 
 .goal-card {
@@ -257,6 +261,57 @@ button.full {
   margin-bottom: 12px;
 }
 
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+}
+
+.weekday-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.weekday {
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 6px 10px;
+  background: transparent;
+  color: inherit;
+}
+
+.weekday.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: transparent;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 122, 24, 0.15);
+  color: var(--accent);
+  font-size: 0.75rem;
+  margin-top: 4px;
+}
+
+.weekday-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .auth__actions {
   display: flex;
   gap: 8px;
@@ -275,6 +330,19 @@ input:focus {
   border-color: var(--accent);
 }
 
+select {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: inherit;
+}
+
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .bottom-nav {
   position: fixed;
   bottom: 12px;
@@ -283,7 +351,7 @@ input:focus {
   background: var(--nav);
   border-radius: 18px;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 6px;
   padding: 10px;
   width: min(420px, calc(100% - 32px));

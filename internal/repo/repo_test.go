@@ -52,8 +52,9 @@ func createTestTables(ctx context.Context, pool *pgxpool.Pool) error {
 		`CREATE TABLE users (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), email text, password_hash text, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now())`,
 		`CREATE TABLE workspaces (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text, type text, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now())`,
 		`CREATE TABLE workspace_members (workspace_id uuid, user_id uuid, role text, permissions jsonb DEFAULT '{}'::jsonb, created_at timestamptz DEFAULT now())`,
-		`CREATE TABLE tasks (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), workspace_id uuid, title text, description text DEFAULT '', value numeric(10,2) DEFAULT 0, status text, done_at timestamptz, deleted_at timestamptz, updated_at timestamptz DEFAULT now(), version int DEFAULT 1)`,
-		`CREATE TABLE rewards (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), workspace_id uuid, title text, description text DEFAULT '', cost numeric(10,2), deleted_at timestamptz, updated_at timestamptz DEFAULT now(), version int DEFAULT 1)`,
+		`CREATE TABLE tasks (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), workspace_id uuid, title text, description text DEFAULT '', value numeric(10,2) DEFAULT 0, status text, done_at timestamptz, deleted_at timestamptz, updated_at timestamptz DEFAULT now(), version int DEFAULT 1, is_recurring boolean DEFAULT false, recurrence_weekdays smallint[] NULL, start_date date NULL, end_date date NULL, timezone text NULL)`,
+		`CREATE TABLE task_occurrences (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), task_id uuid, occurrence_date date NOT NULL, done boolean DEFAULT false, completed_at timestamptz NULL, created_at timestamptz DEFAULT now())`,
+		`CREATE TABLE rewards (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), workspace_id uuid, title text, description text DEFAULT '', cost numeric(10,2), deleted_at timestamptz, updated_at timestamptz DEFAULT now(), version int DEFAULT 1, one_time boolean DEFAULT false)`,
 		`CREATE TABLE reward_purchases (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), workspace_id uuid, reward_id uuid, user_id uuid, cost numeric(10,2), purchased_at timestamptz DEFAULT now())`,
 		`CREATE TABLE transactions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), workspace_id uuid, user_id uuid, type text, amount numeric(10,2), reason text, entity_type text, entity_id uuid, created_at timestamptz DEFAULT now())`,
 		`CREATE TABLE workspace_balance (workspace_id uuid PRIMARY KEY, balance numeric(10,2) DEFAULT 0, updated_at timestamptz DEFAULT now())`,
@@ -91,11 +92,11 @@ func TestCompleteTaskIdempotent(t *testing.T) {
 		t.Fatalf("task: %v", err)
 	}
 
-	value, completed, err := repo.CompleteTask(ctx, taskID, workspaceID, userID)
+	value, completed, err := repo.CompleteTask(ctx, taskID, workspaceID, userID, nil)
 	if err != nil || !completed || value != 5 {
 		t.Fatalf("first complete failed: value=%v completed=%v err=%v", value, completed, err)
 	}
-	value, completed, err = repo.CompleteTask(ctx, taskID, workspaceID, userID)
+	value, completed, err = repo.CompleteTask(ctx, taskID, workspaceID, userID, nil)
 	if err != nil || completed || value != 0 {
 		t.Fatalf("second complete should be noop: value=%v completed=%v err=%v", value, completed, err)
 	}

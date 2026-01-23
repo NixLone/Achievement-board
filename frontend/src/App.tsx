@@ -1,57 +1,185 @@
 import { useEffect, useMemo, useState } from "react";
-import * as api from "./api";
+import { BottomNav, TabId } from "./components/BottomNav";
+import { Home } from "./pages/Home";
+import { Plans } from "./pages/Plans";
+import { Store } from "./pages/Store";
+import { Achievements } from "./pages/Achievements";
+import { Settings } from "./pages/Settings";
+import { Workspace } from "./pages/Workspace";
 import {
-  Achievement,
-  Reward,
-  Task,
-  WorkspaceSnapshot,
-  emptySnapshot,
-  loadSnapshot,
-  saveSnapshot
-} from "./storage";
+  acceptInvite,
+  addAchievement,
+  addReward,
+  addTask,
+  buyReward,
+  completeTask,
+  createInvite,
+  createWorkspace,
+  deleteAchievement,
+  deleteReward,
+  deleteTask,
+  fetchWorkspaceBalance,
+  getMe,
+  listRewardPurchases,
+  listTaskInstances,
+  listWorkspaceMembers,
+  listWorkspaces,
+  login,
+  register,
+  runSyncPull,
+  updateAchievement,
+  updateReward,
+  updateSettings,
+  updateTask
+} from "./api";
+import { ApiError, hasApiBaseUrl } from "./api/client";
+import { useStore } from "./state/store";
+import { Achievement, Reward, RewardPurchase, Task, TaskInstance } from "./storage";
+import { mergeById } from "./utils/merge";
+import { useTheme } from "./theme/useTheme";
 
-const tabs = ["Today", "Plans", "Store", "Achievements", "Settings"] as const;
+function formatDate(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
 
-type Tab = (typeof tabs)[number];
+function getWeekRange(base: Date) {
+  const day = base.getDay();
+  const diff = (day === 0 ? -6 : 1) - day;
+  const monday = new Date(base);
+  monday.setDate(base.getDate() + diff);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  return { start: monday, end: sunday };
+}
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<Tab>("Today");
-  const [snapshot, setSnapshot] = useState<WorkspaceSnapshot>(emptySnapshot());
+  const { snapshot, setSnapshot } = useStore();
+  const [activeTab, setActiveTab] = useState<TabId>("home");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [balance, setBalance] = useState<number>(0);
+  const [workspaces, setWorkspaces] = useState<string[]>([]);
+  const [purchases, setPurchases] = useState<RewardPurchase[]>([]);
+  const [members, setMembers] = useState<{ id: string; email: string; role: string }[]>([]);
+  const [dayInstances, setDayInstances] = useState<TaskInstance[]>([]);
+  const [weekInstances, setWeekInstances] = useState<TaskInstance[]>([]);
+  const [monthInstances, setMonthInstances] = useState<TaskInstance[]>([]);
+  const [yearInstances, setYearInstances] = useState<TaskInstance[]>([]);
+  const { theme, setTheme } = useTheme();
+
+  const apiMissing = !hasApiBaseUrl();
+
+  const tasks = useMemo(() => snapshot.tasks ?? [], [snapshot.tasks]);
+  const rewards = useMemo(() => snapshot.rewards ?? [], [snapshot.rewards]);
+  const achievements = useMemo(() => snapshot.achievements ?? [], [snapshot.achievements]);
+
+  const periodStats = useMemo(() => {
+    const day = summarizeInstances(dayInstances);
+    const week = summarizeInstances(weekInstances);
+    const month = summarizeInstances(monthInstances);
+    const year = summarizeInstances(yearInstances);
+    return [
+      { id: "day", label: "День", ...day },
+      { id: "week", label: "Неделя", ...week },
+      { id: "month", label: "Месяц", ...month },
+      { id: "year", label: "Год", ...year }
+    ];
+  }, [dayInstances, weekInstances, monthInstances, yearInstances]);
+
+  const streakDays = useMemo(() => {
+    const today = new Date();
+    let streak = 0;
+    for (let i = 0; i < 7; i += 1) {
+      const date = new Date(today);
+      date.setDate(today.getDate() - i);
+      const dateKey = formatDate(date);
+      const tasksForDay = weekInstances.filter((task) => task.occurrence_date === dateKey);
+      if (tasksForDay.length === 0) break;
+      if (!tasksForDay.every((task) => task.done)) break;
+      streak += 1;
+    }
+    return streak;
+  }, [weekInstances]);
 
   useEffect(() => {
-    loadSnapshot().then((data) => {
-      setSnapshot(data);
-    });
-  }, []);
+    if (!snapshot.workspaceId) return;
+    refreshWorkspace(snapshot.workspaceId).catch(() => undefined);
+  }, [snapshot.workspaceId]);
 
-  const todayTasks = useMemo(
-    () => snapshot.tasks.filter((task) => !task.deleted_at && task.status !== "done"),
-    [snapshot.tasks]
-  );
+  async function refreshWorkspace(workspaceId: string) {
+    await refreshBalance(workspaceId);
+    await refreshInstances(workspaceId);
+    await refreshPurchases(workspaceId);
+    await refreshMembers(workspaceId);
+  }
+
+  async function refreshBalance(workspaceId?: string | null) {
+    if (!workspaceId) return;
+    const data = await fetchWorkspaceBalance(workspaceId);
+    setBalance(data.balance);
+  }
+
+  async function refreshInstances(workspaceId: string) {
+    const today = new Date();
+    const dayKey = formatDate(today);
+    const weekRange = getWeekRange(today);
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    const yearStart = new Date(today.getFullYear(), 0, 1);
+    const yearEnd = new Date(today.getFullYear(), 11, 31);
+
+    const dayData = await listTaskInstances(workspaceId, dayKey, dayKey);
+    const weekData = await listTaskInstances(workspaceId, formatDate(weekRange.start), formatDate(weekRange.end));
+    const monthData = await listTaskInstances(workspaceId, formatDate(monthStart), formatDate(monthEnd));
+    const yearData = await listTaskInstances(workspaceId, formatDate(yearStart), formatDate(yearEnd));
+
+    setDayInstances(dayData.instances ?? []);
+    setWeekInstances(weekData.instances ?? []);
+    setMonthInstances(monthData.instances ?? []);
+    setYearInstances(yearData.instances ?? []);
+  }
+
+  async function refreshPurchases(workspaceId: string) {
+    const data = await listRewardPurchases(workspaceId);
+    setPurchases(data.purchases ?? []);
+  }
+
+  async function refreshMembers(workspaceId: string) {
+    const data = await listWorkspaceMembers(workspaceId);
+    setMembers(data.members ?? []);
+  }
 
   async function handleAuth(action: "login" | "register") {
+    if (apiMissing) {
+      setStatus("API URL не настроен");
+      return;
+    }
     setStatus(null);
     try {
       if (action === "register") {
-        await api.register(email, password);
+        await register(email, password);
       }
-      await api.login(email, password);
-      const me = await api.getMe();
-      const workspaceID = await api.listWorkspaces();
-      if (!workspaceID) {
-        throw new Error("Workspace ID is missing");
-      }
-      const nextSnapshot = { ...snapshot, user: me, workspaceId: workspaceID };
+      await login(email, password);
+      const me = await getMe();
+      const workspaceList = await listWorkspaces();
+      const activeWorkspace = me.settings?.last_active_workspace ?? workspaceList[0] ?? null;
+      const nextSnapshot = { ...snapshot, user: { id: me.id, email: me.email }, workspaceId: activeWorkspace, settings: me.settings };
       setSnapshot(nextSnapshot);
-      await saveSnapshot(nextSnapshot);
-      await refreshBalance(workspaceID);
+      setWorkspaces(workspaceList);
+      if (me.settings?.theme) {
+        setTheme(me.settings.theme as any);
+      }
+      if (activeWorkspace) {
+        await refreshWorkspace(activeWorkspace);
+      }
       setStatus("Авторизация успешна");
     } catch (error) {
-      setStatus("Не удалось авторизоваться");
+      if (error instanceof ApiError) {
+        setStatus(error.message);
+      } else {
+        setStatus("Сервер недоступен");
+      }
     }
   }
 
@@ -62,284 +190,323 @@ export default function App() {
     }
     setStatus("Синхронизация...");
     try {
-      const updated = await api.runSyncPull(snapshot);
+      const updated = await runSyncPull(snapshot);
       setSnapshot(updated);
-      await saveSnapshot(updated);
-      await refreshBalance(updated.workspaceId);
+      if (updated.workspaceId) {
+        await refreshWorkspace(updated.workspaceId);
+      }
       setStatus("Синхронизация завершена");
     } catch (error) {
-      setStatus("Ошибка синхронизации");
+      if (error instanceof ApiError) {
+        setStatus(error.message);
+      } else {
+        setStatus("Ошибка синхронизации");
+      }
     }
   }
 
-  async function refreshBalance(workspaceId: string) {
-    const data = await api.fetchWorkspaceBalance(workspaceId);
-    setBalance(data.balance);
+  async function handleAddTask(form: {
+    title: string;
+    value: number;
+    dueDate: string;
+    is_recurring?: boolean;
+    recurrence_weekdays?: number[];
+  }) {
+    if (!snapshot.workspaceId) return;
+    try {
+      const task = await addTask(snapshot.workspaceId, form);
+      const updated = { ...snapshot, tasks: mergeById(snapshot.tasks, [task]) };
+      setSnapshot(updated);
+      await refreshInstances(snapshot.workspaceId);
+    } catch (error) {
+      setStatus("Не удалось добавить задачу");
+    }
   }
 
-  async function handleAddTask(form: { title: string; value: number; dueDate: string }) {
+  async function handleCompleteTask(task: TaskInstance) {
     if (!snapshot.workspaceId) return;
-    const task = await api.addTask(snapshot.workspaceId, form);
-    const updated = updateLocalCache(snapshot, { tasks: [task] });
-    setSnapshot(updated);
-    await saveSnapshot(updated);
-  }
-
-  async function handleCompleteTask(task: Task) {
-    if (!snapshot.workspaceId) return;
-    await api.completeTask(snapshot.workspaceId, task.id);
-    const updated = updateLocalCache(snapshot, {
-      tasks: snapshot.tasks.map((item) =>
-        item.id === task.id
-          ? { ...item, status: "done", done_at: new Date().toISOString() }
-          : item
-      )
-    });
-    setSnapshot(updated);
-    await saveSnapshot(updated);
+    await completeTask(snapshot.workspaceId, task.id, task.occurrence_date);
+    await refreshInstances(snapshot.workspaceId);
     await refreshBalance(snapshot.workspaceId);
   }
 
-  async function handleAddReward(form: { title: string; cost: number; description: string }) {
+  async function handleEditTask(task: Task, update: Partial<Task>) {
     if (!snapshot.workspaceId) return;
-    const reward = await api.addReward(snapshot.workspaceId, form);
-    const updated = updateLocalCache(snapshot, { rewards: [reward] });
-    setSnapshot(updated);
-    await saveSnapshot(updated);
+    const updatedTask = { ...task, ...update };
+    setSnapshot({ ...snapshot, tasks: mergeById(snapshot.tasks, [updatedTask]) });
+  }
+
+  async function handleSaveTask(task: Task) {
+    if (!snapshot.workspaceId) return;
+    try {
+      await updateTask(snapshot.workspaceId, task.id, {
+        title: task.title,
+        description: task.description,
+        value: task.value
+      });
+    } catch (error) {
+      setStatus("Не удалось сохранить задачу");
+    }
+  }
+
+  async function handleDeleteTask(task: Task) {
+    if (!snapshot.workspaceId) return;
+    const updatedTask = { ...task, deleted_at: new Date().toISOString() };
+    setSnapshot({ ...snapshot, tasks: mergeById(snapshot.tasks, [updatedTask]) });
+    try {
+      await deleteTask(snapshot.workspaceId, task.id);
+      await refreshInstances(snapshot.workspaceId);
+    } catch (error) {
+      setStatus("Не удалось удалить задачу");
+    }
+  }
+
+  async function handleAddReward(form: { title: string; cost: number; description: string; icon: string; one_time: boolean }) {
+    if (!snapshot.workspaceId) return;
+    try {
+      const reward = await addReward(snapshot.workspaceId, form);
+      const updated = { ...snapshot, rewards: mergeById(snapshot.rewards, [reward]) };
+      setSnapshot(updated);
+    } catch (error) {
+      setStatus("Не удалось добавить награду");
+    }
   }
 
   async function handleBuyReward(reward: Reward) {
     if (!snapshot.workspaceId) return;
-    await api.buyReward(snapshot.workspaceId, reward.id);
-    await refreshBalance(snapshot.workspaceId);
+    try {
+      await buyReward(snapshot.workspaceId, reward.id);
+      await refreshBalance(snapshot.workspaceId);
+      await refreshPurchases(snapshot.workspaceId);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        setStatus(error.message);
+      }
+    }
   }
 
-  async function handleAddAchievement(form: { title: string; description: string }) {
+  async function handleEditReward(reward: Reward, update: Partial<Reward>) {
     if (!snapshot.workspaceId) return;
-    const achievement = await api.addAchievement(snapshot.workspaceId, form);
-    const updated = updateLocalCache(snapshot, { achievements: [achievement] });
-    setSnapshot(updated);
-    await saveSnapshot(updated);
+    const updatedReward = { ...reward, ...update };
+    setSnapshot({ ...snapshot, rewards: mergeById(snapshot.rewards, [updatedReward]) });
   }
+
+  async function handleSaveReward(reward: Reward) {
+    if (!snapshot.workspaceId) return;
+    try {
+      await updateReward(snapshot.workspaceId, reward.id, {
+        title: reward.title,
+        description: reward.description,
+        cost: reward.cost,
+        one_time: reward.one_time
+      });
+    } catch (error) {
+      setStatus("Не удалось сохранить награду");
+    }
+  }
+
+  async function handleDeleteReward(reward: Reward) {
+    if (!snapshot.workspaceId) return;
+    const updatedReward = { ...reward, deleted_at: new Date().toISOString() };
+    setSnapshot({ ...snapshot, rewards: mergeById(snapshot.rewards, [updatedReward]) });
+    try {
+      await deleteReward(snapshot.workspaceId, reward.id);
+    } catch (error) {
+      setStatus("Не удалось удалить награду");
+    }
+  }
+
+  async function handleAddAchievement(form: { title: string; description: string; imageUrl: string }) {
+    if (!snapshot.workspaceId) return;
+    try {
+      const achievement = await addAchievement(snapshot.workspaceId, form);
+      const updated = { ...snapshot, achievements: mergeById(snapshot.achievements, [achievement]) };
+      setSnapshot(updated);
+    } catch (error) {
+      setStatus("Не удалось добавить достижение");
+    }
+  }
+
+  async function handleEditAchievement(achievement: Achievement, update: Partial<Achievement>) {
+    if (!snapshot.workspaceId) return;
+    const updatedAchievement = { ...achievement, ...update };
+    setSnapshot({ ...snapshot, achievements: mergeById(snapshot.achievements, [updatedAchievement]) });
+  }
+
+  async function handleSaveAchievement(achievement: Achievement) {
+    if (!snapshot.workspaceId) return;
+    try {
+      await updateAchievement(snapshot.workspaceId, achievement.id, {
+        title: achievement.title,
+        description: achievement.description,
+        image_url: achievement.image_url
+      });
+    } catch (error) {
+      setStatus("Не удалось сохранить достижение");
+    }
+  }
+
+  async function handleDeleteAchievement(achievement: Achievement) {
+    if (!snapshot.workspaceId) return;
+    const updatedAchievement = { ...achievement, deleted_at: new Date().toISOString() };
+    setSnapshot({ ...snapshot, achievements: mergeById(snapshot.achievements, [updatedAchievement]) });
+    try {
+      await deleteAchievement(snapshot.workspaceId, achievement.id);
+    } catch (error) {
+      setStatus("Не удалось удалить достижение");
+    }
+  }
+
+  async function handleThemeChange(nextTheme: string) {
+    setTheme(nextTheme as any);
+    if (!snapshot.user?.id || apiMissing) return;
+    try {
+      await updateSettings({ theme: nextTheme, last_active_workspace: snapshot.workspaceId ?? null });
+    } catch (error) {
+      setStatus("Не удалось сохранить тему");
+    }
+  }
+
+  async function handleWorkspaceChange(nextWorkspaceId: string) {
+    if (!nextWorkspaceId) return;
+    setSnapshot({ ...snapshot, workspaceId: nextWorkspaceId });
+    if (!apiMissing) {
+      await updateSettings({ theme, last_active_workspace: nextWorkspaceId });
+    }
+    await refreshWorkspace(nextWorkspaceId);
+  }
+
+  async function handleCreateWorkspace(name: string) {
+    const result = await createWorkspace(name, "shared");
+    const workspaceList = await listWorkspaces();
+    setWorkspaces(workspaceList);
+    if (result.id) {
+      await handleWorkspaceChange(result.id);
+    }
+  }
+
+  async function handleCreateInvite() {
+    if (!snapshot.workspaceId) return;
+    try {
+      const result = await createInvite(snapshot.workspaceId);
+      setStatus(`Инвайт создан: ${result.code}`);
+    } catch (error) {
+      setStatus("Не удалось создать инвайт");
+    }
+  }
+
+  async function handleAcceptInvite(code: string) {
+    try {
+      const result = await acceptInvite(code);
+      const workspaceList = await listWorkspaces();
+      setWorkspaces(workspaceList);
+      if (result.workspace_id) {
+        await handleWorkspaceChange(result.workspace_id);
+      }
+    } catch (error) {
+      setStatus("Не удалось принять инвайт");
+    }
+  }
+
+  async function handleRefreshMembers() {
+    if (!snapshot.workspaceId) return;
+    await refreshMembers(snapshot.workspaceId);
+  }
+
+  const content = (() => {
+    switch (activeTab) {
+      case "home":
+        return (
+          <Home
+            balance={balance}
+            periodStats={periodStats}
+            todayTasks={dayInstances}
+            streakDays={streakDays}
+            onAdd={handleAddTask}
+            onComplete={handleCompleteTask}
+            onEdit={handleEditTask}
+            onSave={handleSaveTask}
+            onDelete={handleDeleteTask}
+          />
+        );
+      case "plans":
+        return (
+          <Plans
+            periodStats={periodStats}
+            weekInstances={weekInstances}
+            onAdd={handleAddTask}
+            onComplete={handleCompleteTask}
+          />
+        );
+      case "store":
+        return (
+          <Store
+            rewards={rewards}
+            purchases={purchases}
+            onBuy={handleBuyReward}
+            onAdd={handleAddReward}
+            onEdit={handleEditReward}
+            onSave={handleSaveReward}
+            onDelete={handleDeleteReward}
+          />
+        );
+      case "achievements":
+        return (
+          <Achievements
+            achievements={achievements}
+            onAdd={handleAddAchievement}
+            onEdit={handleEditAchievement}
+            onSave={handleSaveAchievement}
+            onDelete={handleDeleteAchievement}
+          />
+        );
+      case "workspace":
+        return (
+          <Workspace
+            workspaceId={snapshot.workspaceId}
+            members={members}
+            onCreateWorkspace={handleCreateWorkspace}
+            onCreateInvite={handleCreateInvite}
+            onAcceptInvite={handleAcceptInvite}
+            onRefresh={handleRefreshMembers}
+          />
+        );
+      case "settings":
+        return (
+          <Settings
+            email={email}
+            password={password}
+            userEmail={snapshot.user?.email}
+            workspaceId={snapshot.workspaceId}
+            workspaces={workspaces}
+            theme={theme}
+            onEmailChange={setEmail}
+            onPasswordChange={setPassword}
+            onThemeChange={handleThemeChange}
+            onWorkspaceChange={handleWorkspaceChange}
+            onLogin={() => handleAuth("login")}
+            onRegister={() => handleAuth("register")}
+            onSync={handleSync}
+            status={status}
+            apiMissing={apiMissing}
+            lastSync={snapshot.lastSync}
+          />
+        );
+      default:
+        return null;
+    }
+  })();
 
   return (
     <div className="app">
-      <header className="app__header">
-        <div>
-          <h1>FireGoals</h1>
-          <p className="muted">Цели, задачи и огоньки</p>
-        </div>
-        <div className="balance">
-          <span>Огоньки</span>
-          <strong>{balance.toFixed(2)}</strong>
-        </div>
-      </header>
-      <nav className="app__nav">
-        {tabs.map((tab) => (
-          <button
-            key={tab}
-            className={tab === activeTab ? "active" : ""}
-            onClick={() => setActiveTab(tab)}
-          >
-            {tab}
-          </button>
-        ))}
-      </nav>
-      <main className="app__main">
-        {activeTab === "Today" && (
-          <section className="card">
-            <h2>Сегодня</h2>
-            <TaskForm onAdd={handleAddTask} />
-            <ul className="list">
-              {todayTasks.map((task) => (
-                <li key={task.id} className="list__item">
-                  <div>
-                    <p>{task.title}</p>
-                    <span className="muted">+{task.value} огоньков</span>
-                  </div>
-                  <button onClick={() => handleCompleteTask(task)}>Готово</button>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
-        {activeTab === "Plans" && (
-          <section className="card">
-            <h2>Планы</h2>
-            <p className="muted">Добавляйте цели и задачи на неделю, месяц или год.</p>
-            <p>В скором времени появится детальная планировка.</p>
-          </section>
-        )}
-        {activeTab === "Store" && (
-          <section className="card">
-            <h2>Магазин наград</h2>
-            <RewardForm onAdd={handleAddReward} />
-            <ul className="list">
-              {snapshot.rewards.filter((reward) => !reward.deleted_at).map((reward) => (
-                <li key={reward.id} className="list__item">
-                  <div>
-                    <p>{reward.title}</p>
-                    <span className="muted">{reward.cost} огоньков</span>
-                  </div>
-                  <button onClick={() => handleBuyReward(reward)}>Купить</button>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
-        {activeTab === "Achievements" && (
-          <section className="card">
-            <h2>Достижения</h2>
-            <AchievementForm onAdd={handleAddAchievement} />
-            <ul className="list">
-              {snapshot.achievements
-                .filter((achievement) => !achievement.deleted_at)
-                .map((achievement) => (
-                <li key={achievement.id} className="list__item">
-                  <div>
-                    <p>{achievement.title}</p>
-                    <span className="muted">{achievement.description}</span>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
-        {activeTab === "Settings" && (
-          <section className="card">
-            <h2>Профиль и синхронизация</h2>
-            <div className="auth">
-              <input
-                type="email"
-                placeholder="Email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-              />
-              <input
-                type="password"
-                placeholder="Пароль"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-              />
-              <div className="auth__actions">
-                <button onClick={() => handleAuth("login")}>Войти</button>
-                <button className="secondary" onClick={() => handleAuth("register")}>
-                  Регистрация
-                </button>
-              </div>
-            </div>
-            <button className="full" onClick={handleSync}>
-              Синхронизировать сейчас
-            </button>
-            {status && <p className="muted">{status}</p>}
-          </section>
-        )}
-      </main>
+      {content}
+      <BottomNav active={activeTab} onChange={setActiveTab} />
     </div>
   );
 }
 
-function TaskForm({ onAdd }: { onAdd: (data: { title: string; value: number; dueDate: string }) => void }) {
-  const [title, setTitle] = useState("");
-  const [value, setValue] = useState(10);
-  const [dueDate, setDueDate] = useState("");
-
-  return (
-    <div className="form">
-      <input
-        value={title}
-        placeholder="Название задачи"
-        onChange={(event) => setTitle(event.target.value)}
-      />
-      <input
-        type="number"
-        value={value}
-        onChange={(event) => setValue(Number(event.target.value))}
-      />
-      <input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
-      <button
-        onClick={() => {
-          if (title) {
-            onAdd({ title, value, dueDate });
-            setTitle("");
-            setDueDate("");
-          }
-        }}
-      >
-        Добавить
-      </button>
-    </div>
-  );
-}
-
-function RewardForm({
-  onAdd
-}: {
-  onAdd: (data: { title: string; cost: number; description: string }) => void;
-}) {
-  const [title, setTitle] = useState("");
-  const [cost, setCost] = useState(30);
-  const [description, setDescription] = useState("");
-
-  return (
-    <div className="form">
-      <input
-        value={title}
-        placeholder="Награда"
-        onChange={(event) => setTitle(event.target.value)}
-      />
-      <input type="number" value={cost} onChange={(event) => setCost(Number(event.target.value))} />
-      <input
-        value={description}
-        placeholder="Описание"
-        onChange={(event) => setDescription(event.target.value)}
-      />
-      <button
-        onClick={() => {
-          if (title) {
-            onAdd({ title, cost, description });
-            setTitle("");
-            setDescription("");
-          }
-        }}
-      >
-        Добавить
-      </button>
-    </div>
-  );
-}
-
-function AchievementForm({
-  onAdd
-}: {
-  onAdd: (data: { title: string; description: string }) => void;
-}) {
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-
-  return (
-    <div className="form">
-      <input
-        value={title}
-        placeholder="Достижение"
-        onChange={(event) => setTitle(event.target.value)}
-      />
-      <input
-        value={description}
-        placeholder="Описание"
-        onChange={(event) => setDescription(event.target.value)}
-      />
-      <button
-        onClick={() => {
-          if (title) {
-            onAdd({ title, description });
-            setTitle("");
-            setDescription("");
-          }
-        }}
-      >
-        Добавить
-      </button>
-    </div>
-  );
+function summarizeInstances(instances: TaskInstance[]) {
+  const total = instances.length;
+  const done = instances.filter((task) => task.done).length;
+  return { done, total };
 }

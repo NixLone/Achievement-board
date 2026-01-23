@@ -6,10 +6,12 @@ export function Settings({
   password,
   userEmail,
   workspaceId,
+  workspaces,
   theme,
   onEmailChange,
   onPasswordChange,
   onThemeChange,
+  onWorkspaceChange,
   onLogin,
   onRegister,
   onSync,
@@ -21,10 +23,12 @@ export function Settings({
   password: string;
   userEmail?: string | null;
   workspaceId?: string | null;
+  workspaces: string[];
   theme: Theme;
   onEmailChange: (value: string) => void;
   onPasswordChange: (value: string) => void;
   onThemeChange: (theme: Theme) => void;
+  onWorkspaceChange: (workspaceId: string) => void;
   onLogin: () => void;
   onRegister: () => void;
   onSync: () => void;
@@ -46,7 +50,17 @@ export function Settings({
           <h3>Профиль</h3>
           <span className="muted">{userEmail ?? "Гость"}</span>
         </div>
-        <div className="muted">Workspace: {workspaceId ?? "—"}</div>
+        <label className="field">
+          <span className="muted">Активный workspace</span>
+          <select value={workspaceId ?? ""} onChange={(event) => onWorkspaceChange(event.target.value)}>
+            {workspaces.length === 0 && <option value="">—</option>}
+            {workspaces.map((workspace) => (
+              <option key={workspace} value={workspace}>
+                {workspace}
+              </option>
+            ))}
+          </select>
+        </label>
       </Card>
 
       <Card>

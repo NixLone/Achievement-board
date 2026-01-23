@@ -57,6 +57,11 @@ type taskRequest struct {
 	Description string     `json:"description"`
 	DueDate     *time.Time `json:"due_date"`
 	RepeatRule  *string    `json:"repeat_rule"`
+	IsRecurring bool       `json:"is_recurring"`
+	Weekdays    []int      `json:"recurrence_weekdays"`
+	StartDate   *time.Time `json:"start_date"`
+	EndDate     *time.Time `json:"end_date"`
+	Timezone    *string    `json:"timezone"`
 	Value       float64    `json:"value"`
 	Status      string     `json:"status"`
 }
@@ -68,6 +73,12 @@ type rewardRequest struct {
 	Cost          float64 `json:"cost"`
 	IsShared      bool    `json:"is_shared"`
 	CooldownHours *int    `json:"cooldown_hours"`
+	OneTime       bool    `json:"one_time"`
+}
+
+type settingsRequest struct {
+	Theme               string  `json:"theme"`
+	LastActiveWorkspace *string `json:"last_active_workspace"`
 }
 
 type achievementRequest struct {
@@ -128,7 +139,47 @@ func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "User not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"id": id, "email": email})
+	settings, err := a.Repo.GetUserSettings(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load settings")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "email": email, "settings": settings})
+}
+
+func (a *API) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing user")
+		return
+	}
+	settings, err := a.Repo.GetUserSettings(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load settings")
+		return
+	}
+	writeJSON(w, http.StatusOK, settings)
+}
+
+func (a *API) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing user")
+		return
+	}
+	var req settingsRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.Theme == "" {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Theme required")
+		return
+	}
+	if err := a.Repo.UpsertUserSettings(r.Context(), userID, req.Theme, req.LastActiveWorkspace); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update settings")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (a *API) handleListWorkspaces(w http.ResponseWriter, r *http.Request) {
@@ -189,6 +240,26 @@ func (a *API) handleWorkspaceBalance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, workspaceBalanceResponse{WorkspaceID: workspaceID, Balance: balance})
+}
+
+func (a *API) handleListWorkspaceMembers(w http.ResponseWriter, r *http.Request) {
+	workspaceID := chi.URLParam(r, "id")
+	userID, _ := auth.UserIDFromContext(r.Context())
+	allowed, err := a.Repo.UserInWorkspace(r.Context(), userID, workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to authorize workspace")
+		return
+	}
+	if !allowed {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", "Access denied")
+		return
+	}
+	members, err := a.Repo.ListWorkspaceMembers(r.Context(), workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list members")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"members": members})
 }
 
 func (a *API) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
@@ -343,6 +414,27 @@ func (a *API) handleListTasks(w http.ResponseWriter, r *http.Request) {
 	if !a.authorizeWorkspace(w, r, workspaceID) {
 		return
 	}
+	fromStr := r.URL.Query().Get("from")
+	toStr := r.URL.Query().Get("to")
+	if fromStr != "" && toStr != "" {
+		from, err := time.Parse("2006-01-02", fromStr)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid from date")
+			return
+		}
+		to, err := time.Parse("2006-01-02", toStr)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid to date")
+			return
+		}
+		instances, err := a.Repo.ListTaskInstances(r.Context(), workspaceID, from, to)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list tasks")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"instances": instances})
+		return
+	}
 	tasks, err := a.Repo.ListTasks(r.Context(), workspaceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list tasks")
@@ -367,7 +459,7 @@ func (a *API) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	if status == "" {
 		status = "open"
 	}
-	id, err := a.Repo.CreateTask(r.Context(), req.WorkspaceID, req.GoalID, req.Title, req.Description, req.DueDate, req.RepeatRule, req.Value, status)
+	id, err := a.Repo.CreateTask(r.Context(), req.WorkspaceID, req.GoalID, req.Title, req.Description, req.DueDate, req.RepeatRule, req.Value, status, req.IsRecurring, req.Weekdays, req.StartDate, req.EndDate, req.Timezone)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create task")
 		return
@@ -388,7 +480,7 @@ func (a *API) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 	if !a.authorizeWorkspace(w, r, req.WorkspaceID) {
 		return
 	}
-	if err := a.Repo.UpdateTask(r.Context(), id, req.WorkspaceID, req.GoalID, req.Title, req.Description, req.DueDate, req.RepeatRule, req.Value, req.Status); err != nil {
+	if err := a.Repo.UpdateTask(r.Context(), id, req.WorkspaceID, req.GoalID, req.Title, req.Description, req.DueDate, req.RepeatRule, req.Value, req.Status, req.IsRecurring, req.Weekdays, req.StartDate, req.EndDate, req.Timezone); err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "Task not found")
 			return
@@ -423,7 +515,8 @@ func (a *API) handleDeleteTask(w http.ResponseWriter, r *http.Request) {
 func (a *API) handleCompleteTask(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var req struct {
-		WorkspaceID string `json:"workspace_id"`
+		WorkspaceID    string `json:"workspace_id"`
+		OccurrenceDate string `json:"occurrence_date"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -435,11 +528,24 @@ func (a *API) handleCompleteTask(w http.ResponseWriter, r *http.Request) {
 	if !a.authorizeWorkspace(w, r, req.WorkspaceID) {
 		return
 	}
+	var occurrenceDate *time.Time
+	if req.OccurrenceDate != "" {
+		parsed, err := time.Parse("2006-01-02", req.OccurrenceDate)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid occurrence date")
+			return
+		}
+		occurrenceDate = &parsed
+	}
 	userID, _ := auth.UserIDFromContext(r.Context())
-	value, completed, err := a.Repo.CompleteTask(r.Context(), id, req.WorkspaceID, userID)
+	value, completed, err := a.Repo.CompleteTask(r.Context(), id, req.WorkspaceID, userID, occurrenceDate)
 	if err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "Task not found")
+			return
+		}
+		if err.Error() == "occurrence date required" {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Occurrence date required")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to complete task")
@@ -473,7 +579,7 @@ func (a *API) handleCreateReward(w http.ResponseWriter, r *http.Request) {
 	if !a.authorizeWorkspace(w, r, req.WorkspaceID) {
 		return
 	}
-	id, err := a.Repo.CreateReward(r.Context(), req.WorkspaceID, req.Title, req.Description, req.Cost, req.IsShared, req.CooldownHours)
+	id, err := a.Repo.CreateReward(r.Context(), req.WorkspaceID, req.Title, req.Description, req.Cost, req.IsShared, req.CooldownHours, req.OneTime)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create reward")
 		return
@@ -494,7 +600,7 @@ func (a *API) handleUpdateReward(w http.ResponseWriter, r *http.Request) {
 	if !a.authorizeWorkspace(w, r, req.WorkspaceID) {
 		return
 	}
-	if err := a.Repo.UpdateReward(r.Context(), id, req.WorkspaceID, req.Title, req.Description, req.Cost, req.IsShared, req.CooldownHours); err != nil {
+	if err := a.Repo.UpdateReward(r.Context(), id, req.WorkspaceID, req.Title, req.Description, req.Cost, req.IsShared, req.CooldownHours, req.OneTime); err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "Reward not found")
 			return
@@ -551,6 +657,9 @@ func (a *API) handleBuyReward(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, repo.ErrNotFound):
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "Reward not found")
 			return
+		case errors.Is(err, repo.ErrAlreadyPurchased):
+			writeError(w, http.StatusBadRequest, "ALREADY_PURCHASED", "Награда уже куплена")
+			return
 		default:
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to buy reward")
 			return
@@ -558,6 +667,20 @@ func (a *API) handleBuyReward(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"spent": cost})
+}
+
+func (a *API) handleListRewardPurchases(w http.ResponseWriter, r *http.Request) {
+	workspaceID := r.URL.Query().Get("workspace_id")
+	if !a.authorizeWorkspace(w, r, workspaceID) {
+		return
+	}
+	userID, _ := auth.UserIDFromContext(r.Context())
+	purchases, err := a.Repo.ListRewardPurchases(r.Context(), workspaceID, userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list purchases")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"purchases": purchases})
 }
 
 func (a *API) handleListAchievements(w http.ResponseWriter, r *http.Request) {
