@@ -1,18 +1,20 @@
 import { useMemo, useState } from "react";
-import { Task } from "../storage";
+import { Task, TaskInstance } from "../storage";
 import { Card } from "../components/Card";
 import { ProgressBar } from "../components/ProgressBar";
 
-const focusCards = [
-  { id: "day", label: "День", progress: 65 },
-  { id: "week", label: "Неделя", progress: 42 },
-  { id: "month", label: "Месяц", progress: 28 },
-  { id: "year", label: "Год", progress: 12 }
-];
+type PeriodStat = {
+  id: string;
+  label: string;
+  done: number;
+  total: number;
+};
 
 export function Home({
   balance,
-  tasks,
+  periodStats,
+  todayTasks,
+  streakDays,
   onAdd,
   onComplete,
   onEdit,
@@ -20,17 +22,22 @@ export function Home({
   onDelete
 }: {
   balance: number;
-  tasks: Task[];
-  onAdd: (form: { title: string; value: number; dueDate: string }) => void;
-  onComplete: (task: Task) => void;
+  periodStats: PeriodStat[];
+  todayTasks: TaskInstance[];
+  streakDays: number;
+  onAdd: (form: {
+    title: string;
+    value: number;
+    dueDate: string;
+    is_recurring?: boolean;
+    recurrence_weekdays?: number[];
+  }) => void;
+  onComplete: (task: TaskInstance) => void;
   onEdit: (task: Task, update: Partial<Task>) => void;
   onSave: (task: Task) => void;
   onDelete: (task: Task) => void;
 }) {
-  const todayTasks = useMemo(
-    () => tasks.filter((task) => !task.deleted_at && task.status !== "done"),
-    [tasks]
-  );
+  const openTodayTasks = useMemo(() => todayTasks.filter((task) => !task.done), [todayTasks]);
 
   return (
     <div className="page">
@@ -46,36 +53,41 @@ export function Home({
       </header>
 
       <div className="grid grid--2">
-        {focusCards.map((card) => (
-          <Card key={card.id} className="goal-card">
-            <div className="goal-card__title">{card.label}</div>
-            <ProgressBar value={card.progress} />
-            <span className="muted">{card.progress}%</span>
-          </Card>
-        ))}
+        {periodStats.map((card) => {
+          const percent = card.total === 0 ? 0 : Math.round((card.done / card.total) * 100);
+          return (
+            <Card key={card.id} className="goal-card">
+              <div className="goal-card__title">{card.label}</div>
+              <ProgressBar value={percent} />
+              <span className="muted">
+                {percent}% · {card.done}/{card.total}
+              </span>
+            </Card>
+          );
+        })}
       </div>
 
       <Card className="streak-card">
         <div className="streak-card__header">
           <div>
             <h3>Полоса достижений</h3>
-            <p className="muted">7 дней подряд</p>
+            <p className="muted">{streakDays} дней подряд</p>
           </div>
           <span className="streak-card__fire">🔥</span>
         </div>
-        <ProgressBar value={72} />
+        <ProgressBar value={Math.min(100, streakDays * 10)} />
       </Card>
 
       <Card>
         <div className="section-header">
           <h3>Задачи на сегодня</h3>
-          <span className="muted">{todayTasks.length}</span>
+          <span className="muted">{openTodayTasks.length}</span>
         </div>
         <TaskForm onAdd={onAdd} />
         <div className="list">
           {todayTasks.map((task) => (
-            <div key={task.id} className="list-item">
-              <div className="list-item__icon">✅</div>
+            <div key={`${task.id}-${task.occurrence_date}`} className="list-item">
+              <div className="list-item__icon">{task.done ? "✅" : "⏳"}</div>
               <div className="list-item__body">
                 <input
                   className="inline-input"
@@ -86,8 +98,8 @@ export function Home({
                 <span className="muted">+{task.value} 🔥</span>
               </div>
               <div className="list-item__trailing">
-                <button className="ghost" onClick={() => onComplete(task)}>
-                  Done
+                <button className="ghost" onClick={() => onComplete(task)} disabled={task.done}>
+                  {task.done ? "Готово" : "Done"}
                 </button>
                 <button className="ghost" onClick={() => onDelete(task)}>
                   ✕
@@ -101,10 +113,26 @@ export function Home({
   );
 }
 
-function TaskForm({ onAdd }: { onAdd: (form: { title: string; value: number; dueDate: string }) => void }) {
+function TaskForm({
+  onAdd
+}: {
+  onAdd: (form: {
+    title: string;
+    value: number;
+    dueDate: string;
+    is_recurring?: boolean;
+    recurrence_weekdays?: number[];
+  }) => void;
+}) {
   const [title, setTitle] = useState("");
   const [value, setValue] = useState(5);
   const [dueDate, setDueDate] = useState("");
+  const [isRecurring, setIsRecurring] = useState(false);
+  const [weekdays, setWeekdays] = useState<number[]>([]);
+
+  const toggleWeekday = (day: number) => {
+    setWeekdays((prev) => (prev.includes(day) ? prev.filter((item) => item !== day) : [...prev, day]));
+  };
 
   return (
     <div className="form-row">
@@ -115,12 +143,32 @@ function TaskForm({ onAdd }: { onAdd: (form: { title: string; value: number; due
       />
       <input type="number" value={value} onChange={(event) => setValue(Number(event.target.value))} />
       <input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
+      <label className="checkbox">
+        <input type="checkbox" checked={isRecurring} onChange={(event) => setIsRecurring(event.target.checked)} />
+        Повторять
+      </label>
+      {isRecurring && (
+        <div className="weekday-picker">
+          {["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"].map((label, idx) => (
+            <button
+              key={label}
+              type="button"
+              className={weekdays.includes(idx) ? "weekday active" : "weekday"}
+              onClick={() => toggleWeekday(idx)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
       <button
         onClick={() => {
           if (!title) return;
-          onAdd({ title, value, dueDate });
+          onAdd({ title, value, dueDate, is_recurring: isRecurring, recurrence_weekdays: weekdays });
           setTitle("");
           setDueDate("");
+          setIsRecurring(false);
+          setWeekdays([]);
         }}
       >
         Добавить

@@ -38,9 +38,12 @@ func (a *API) Router() http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(a.authMiddleware)
 		r.Get("/me", a.handleMe)
+		r.Get("/settings", a.handleGetSettings)
+		r.Put("/settings", a.handleUpdateSettings)
 		r.Get("/workspaces", a.handleListWorkspaces)
 		r.Post("/workspaces", a.handleCreateWorkspace)
 		r.Get("/workspaces/{id}/balance", a.handleWorkspaceBalance)
+		r.Get("/workspaces/{id}/members", a.handleListWorkspaceMembers)
 		r.Post("/workspaces/{id}/invite", a.handleCreateInvite)
 		r.Post("/invites/accept", a.handleAcceptInvite)
 
@@ -59,6 +62,7 @@ func (a *API) Router() http.Handler {
 		})
 		r.Route("/rewards", func(r chi.Router) {
 			r.Get("/", a.handleListRewards)
+			r.Get("/purchases", a.handleListRewardPurchases)
 			r.Post("/", a.handleCreateReward)
 			r.Put("/{id}", a.handleUpdateReward)
 			r.Delete("/{id}", a.handleDeleteReward)

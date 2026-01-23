@@ -43,6 +43,7 @@ npm run dev
 
 ```bash
 psql "$DATABASE_URL" -f migrations/0001_init.sql
+psql "$DATABASE_URL" -f migrations/0002_recurring_rewards_settings.sql
 ```
 
 ## Sync Model (MVP v2)
@@ -114,6 +115,12 @@ Verify `/health` works and that the service is deployed from the repository root
 
 **Cloudflare Pages build fails on tsc**  
 Install dependencies (`npm install`) and ensure `VITE_API_BASE_URL` is configured in Pages. Missing env can cause runtime errors.
+
+**Cloudflare Pages root directory**  
+Set the build root directory to `frontend/` and output directory to `dist`.
+
+**DATABASE_URL typos**  
+Make sure the connection string matches Neon format and includes the database name.
 
 **Check /health**  
 Open `<backend-url>/health` to verify the service is up.

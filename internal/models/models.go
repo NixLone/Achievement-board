@@ -48,6 +48,11 @@ type Task struct {
 	Title       string     `json:"title"`
 	Description string     `json:"description"`
 	DueDate     *time.Time `json:"due_date"`
+	IsRecurring bool       `json:"is_recurring"`
+	Weekdays    []int      `json:"recurrence_weekdays"`
+	StartDate   *time.Time `json:"start_date"`
+	EndDate     *time.Time `json:"end_date"`
+	Timezone    *string    `json:"timezone"`
 	RepeatRule  *string    `json:"repeat_rule"`
 	Value       float64    `json:"value"`
 	Status      string     `json:"status"`
@@ -66,6 +71,7 @@ type Reward struct {
 	Cost          float64    `json:"cost"`
 	IsShared      bool       `json:"is_shared"`
 	CooldownHours *int       `json:"cooldown_hours"`
+	OneTime       bool       `json:"one_time"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
 	DeletedAt     *time.Time `json:"deleted_at"`
@@ -119,6 +125,13 @@ type Session struct {
 	Token     string    `json:"token"`
 	ExpiresAt time.Time `json:"expires_at"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+type UserSettings struct {
+	UserID              string    `json:"user_id"`
+	Theme               string    `json:"theme"`
+	LastActiveWorkspace *string   `json:"last_active_workspace"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 type Invite struct {

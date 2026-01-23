@@ -43,6 +43,7 @@ npm run dev
 
 ```bash
 psql "$DATABASE_URL" -f migrations/0001_init.sql
+psql "$DATABASE_URL" -f migrations/0002_recurring_rewards_settings.sql
 ```
 
 ## Синхронизация (MVP v2)
@@ -113,6 +114,12 @@ Frontend:
 
 **Cloudflare Pages падает на tsc**  
 Установите зависимости (`npm install`) и проверьте, что `VITE_API_BASE_URL` задан в Pages.
+
+**Корневая директория Cloudflare Pages**  
+Укажите root directory `frontend/` и output directory `dist`.
+
+**Опечатки в DATABASE_URL**  
+Проверьте формат строки подключения Neon и имя базы данных.
 
 **Как проверить /health**  
 Откройте `<backend-url>/health` и убедитесь, что статус `ok`.

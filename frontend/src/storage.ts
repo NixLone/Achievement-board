@@ -4,12 +4,22 @@ export type Task = {
   title: string;
   description: string;
   due_date?: string | null;
+  is_recurring?: boolean;
+  recurrence_weekdays?: number[];
+  start_date?: string | null;
+  end_date?: string | null;
+  timezone?: string | null;
   value: number;
   status: string;
   done_at?: string | null;
   deleted_at?: string | null;
   updated_at?: string;
   version?: number;
+};
+
+export type TaskInstance = Task & {
+  occurrence_date: string;
+  done: boolean;
 };
 
 export type Reward = {
@@ -19,9 +29,20 @@ export type Reward = {
   description: string;
   cost: number;
   icon?: string;
+  one_time?: boolean;
   deleted_at?: string | null;
   updated_at?: string;
   version?: number;
+};
+
+export type RewardPurchase = {
+  id: string;
+  workspace_id: string;
+  reward_id: string;
+  user_id: string;
+  cost: number;
+  purchased_at: string;
+  note?: string | null;
 };
 
 export type Achievement = {
@@ -50,11 +71,19 @@ export type Goal = {
 export type WorkspaceSnapshot = {
   user?: { id: string; email: string } | null;
   workspaceId?: string | null;
+  settings?: UserSettings | null;
   tasks: Task[];
   rewards: Reward[];
   achievements: Achievement[];
   goals: Goal[];
   lastSync?: string | null;
+};
+
+export type UserSettings = {
+  user_id: string;
+  theme: string;
+  last_active_workspace?: string | null;
+  updated_at?: string;
 };
 
 const STORAGE_KEY = "firegoals-snapshot";
