@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"firegoals/internal/auth"
@@ -16,6 +17,50 @@ import (
 )
 
 const maxBodyBytes = 1 << 20
+
+type FlexTime struct {
+	time.Time
+}
+
+func (ft *FlexTime) UnmarshalJSON(b []byte) error {
+	// null
+	if string(b) == "null" {
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	// Accept YYYY-MM-DD from <input type="date">
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		ft.Time = t
+		return nil
+	}
+	// Accept RFC3339 timestamps
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		ft.Time = t
+		return nil
+	}
+	// Accept RFC3339 without timezone (rare)
+	if t, err := time.Parse("2006-01-02T15:04:05", s); err == nil {
+		ft.Time = t
+		return nil
+	}
+	return errors.New("invalid date/time format")
+}
+
+func (ft *FlexTime) ToTimePtr() *time.Time {
+	if ft == nil || ft.Time.IsZero() {
+		return nil
+	}
+	t := ft.Time
+	return &t
+}
+
 
 type registerRequest struct {
 	Email    string `json:"email"`
@@ -45,8 +90,8 @@ type goalRequest struct {
 	Title       string     `json:"title"`
 	Description string     `json:"description"`
 	Period      string     `json:"period"`
-	StartDate   *time.Time `json:"start_date"`
-	EndDate     *time.Time `json:"end_date"`
+	StartDate   *FlexTime `json:"start_date"`
+	EndDate     *FlexTime `json:"end_date"`
 	Status      string     `json:"status"`
 }
 
@@ -55,12 +100,12 @@ type taskRequest struct {
 	GoalID      *string    `json:"goal_id"`
 	Title       string     `json:"title"`
 	Description string     `json:"description"`
-	DueDate     *time.Time `json:"due_date"`
+	DueDate     *FlexTime `json:"due_date"`
 	RepeatRule  *string    `json:"repeat_rule"`
 	IsRecurring bool       `json:"is_recurring"`
 	Weekdays    []int      `json:"recurrence_weekdays"`
-	StartDate   *time.Time `json:"start_date"`
-	EndDate     *time.Time `json:"end_date"`
+	StartDate   *FlexTime `json:"start_date"`
+	EndDate     *FlexTime `json:"end_date"`
 	Timezone    *string    `json:"timezone"`
 	Value       float64    `json:"value"`
 	Status      string     `json:"status"`
@@ -385,7 +430,7 @@ func (a *API) handleCreateGoal(w http.ResponseWriter, r *http.Request) {
 	if status == "" {
 		status = "active"
 	}
-	id, err := a.Repo.CreateGoal(r.Context(), req.WorkspaceID, req.Title, req.Description, req.Period, status, req.StartDate, req.EndDate)
+	id, err := a.Repo.CreateGoal(r.Context(), req.WorkspaceID, req.Title, req.Description, req.Period, status, req.StartDate.ToTimePtr(), req.EndDate)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create goal")
 		return
@@ -406,7 +451,7 @@ func (a *API) handleUpdateGoal(w http.ResponseWriter, r *http.Request) {
 	if !a.authorizeWorkspace(w, r, req.WorkspaceID) {
 		return
 	}
-	if err := a.Repo.UpdateGoal(r.Context(), id, req.WorkspaceID, req.Title, req.Description, req.Period, req.Status, req.StartDate, req.EndDate); err != nil {
+	if err := a.Repo.UpdateGoal(r.Context(), id, req.WorkspaceID, req.Title, req.Description, req.Period, req.Status, req.StartDate.ToTimePtr(), req.EndDate); err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "Goal not found")
 			return
@@ -488,7 +533,7 @@ func (a *API) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	if status == "" {
 		status = "open"
 	}
-	id, err := a.Repo.CreateTask(r.Context(), req.WorkspaceID, req.GoalID, req.Title, req.Description, req.DueDate, req.RepeatRule, req.Value, status, req.IsRecurring, req.Weekdays, req.StartDate, req.EndDate, req.Timezone)
+	id, err := a.Repo.CreateTask(r.Context(), req.WorkspaceID, req.GoalID, req.Title, req.Description, req.DueDate.ToTimePtr(), req.RepeatRule, req.Value, status, req.IsRecurring, req.Weekdays, req.StartDate.ToTimePtr(), req.EndDate.ToTimePtr(), req.Timezone)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create task")
 		return
@@ -509,7 +554,7 @@ func (a *API) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 	if !a.authorizeWorkspace(w, r, req.WorkspaceID) {
 		return
 	}
-	if err := a.Repo.UpdateTask(r.Context(), id, req.WorkspaceID, req.GoalID, req.Title, req.Description, req.DueDate, req.RepeatRule, req.Value, req.Status, req.IsRecurring, req.Weekdays, req.StartDate, req.EndDate, req.Timezone); err != nil {
+	if err := a.Repo.UpdateTask(r.Context(), id, req.WorkspaceID, req.GoalID, req.Title, req.Description, req.DueDate.ToTimePtr(), req.RepeatRule, req.Value, req.Status, req.IsRecurring, req.Weekdays, req.StartDate.ToTimePtr(), req.EndDate.ToTimePtr(), req.Timezone); err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "Task not found")
 			return

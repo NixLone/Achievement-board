@@ -27,6 +27,11 @@ func main() {
 	}
 	defer pool.Close()
 
+	// Bootstrap DB schema on startup (idempotent).
+	if err := db.RunMigrations(ctx, pool, "migrations"); err != nil {
+		log.Fatalf("failed to run migrations: %v", err)
+	}
+
 	authManager := auth.NewManager(cfg.JWTSecret)
 	repository := repo.New(pool)
 	svc := service.New(repository, authManager)
