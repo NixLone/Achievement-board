@@ -430,7 +430,7 @@ func (a *API) handleCreateGoal(w http.ResponseWriter, r *http.Request) {
 	if status == "" {
 		status = "active"
 	}
-	id, err := a.Repo.CreateGoal(r.Context(), req.WorkspaceID, req.Title, req.Description, req.Period, status, req.StartDate.ToTimePtr(), req.EndDate)
+	id, err := a.Repo.CreateGoal(r.Context(), req.WorkspaceID, req.Title, req.Description, req.Period, status, req.StartDate.ToTimePtr(), req.EndDate.ToTimePtr())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create goal")
 		return
@@ -451,7 +451,7 @@ func (a *API) handleUpdateGoal(w http.ResponseWriter, r *http.Request) {
 	if !a.authorizeWorkspace(w, r, req.WorkspaceID) {
 		return
 	}
-	if err := a.Repo.UpdateGoal(r.Context(), id, req.WorkspaceID, req.Title, req.Description, req.Period, req.Status, req.StartDate.ToTimePtr(), req.EndDate); err != nil {
+	if err := a.Repo.UpdateGoal(r.Context(), id, req.WorkspaceID, req.Title, req.Description, req.Period, req.Status, req.StartDate.ToTimePtr(), req.EndDate.ToTimePtr()); err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "Goal not found")
 			return
